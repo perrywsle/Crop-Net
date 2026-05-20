@@ -1,0 +1,11 @@
+numpy>=1.26
+pandas>=2.2
+pydantic>=2.7
+pydantic-settings>=2.2
+scikit-learn>=1.4
+pillow>=10.3
+
+# Development tools
+mypy>=1.10
+pytest>=8.2
+ruff>=0.4.8
