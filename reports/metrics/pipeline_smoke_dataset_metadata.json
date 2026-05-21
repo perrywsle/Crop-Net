@@ -1,0 +1,16 @@
+{
+  "crop_type": "corn",
+  "image_type": "NDVI",
+  "input_year": 2021,
+  "target_year": 2022,
+  "fips_codes": [
+    "01001",
+    "01003",
+    "01005"
+  ],
+  "raw_cache_dir": "data/cropnet_cache_pipeline_smoke",
+  "max_cache_gb": 3.0,
+  "output_path": "data/processed/pipeline_smoke/multistage_cropnet_features.csv",
+  "row_count": 3,
+  "image_feature_count": 576
+}

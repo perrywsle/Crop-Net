@@ -1,0 +1,11 @@
+{
+  "csv_path": "data/processed/pipeline_smoke/multistage_cropnet_features.csv",
+  "target_column": "yield",
+  "row_count": 3,
+  "train_rows": 2,
+  "holdout_rows": 1,
+  "model_path": "models/yield_model/pipeline_smoke_multistage_yield_regressor.joblib",
+  "mae": 11.75,
+  "rmse": 11.75,
+  "r2": null
+}
