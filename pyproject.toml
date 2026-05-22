@@ -27,6 +27,9 @@ dev = [
     "ruff>=0.4.8",
 ]
 
+[project.scripts]
+crop-fusion-gui = "crop_fusion_ai.gui.app:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

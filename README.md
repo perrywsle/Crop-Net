@@ -5,6 +5,7 @@ that will combine:
 
 - A plant health image classifier.
 - A CropNet-style crop yield prediction model.
+- A preprocessing stage for AG, NDVI, and weather modalities.
 - A late-fusion simulation pipeline using image-derived `health_score` and
   `image_confidence` features.
 - A Tkinter desktop demo UI.
@@ -39,3 +40,28 @@ ruff check .
 mypy src
 pytest
 ```
+
+Launch the desktop preprocessing GUI:
+
+```bash
+crop-fusion-gui
+```
+
+To generate small GUI-ready demo inputs under `data/raw/images` and
+`data/raw/tabular`:
+
+```bash
+python scripts/make_gui_demo_data.py
+```
+
+## Preprocessing
+
+The preprocessing package now exposes stable feature extractors for the three
+CropNet modalities:
+
+- `crop_fusion_ai.preprocessing.extract_ag_features`
+- `crop_fusion_ai.preprocessing.extract_ndvi_features`
+- `crop_fusion_ai.preprocessing.extract_weather_features`
+
+The GUI provides separate upload tabs for AG, NDVI, and weather CSV inputs and
+shows the extracted feature table for each modality.
