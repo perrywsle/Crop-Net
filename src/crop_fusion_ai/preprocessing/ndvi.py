@@ -38,6 +38,14 @@ def _connected_patch_ratio(mask: np.ndarray) -> tuple[int, float]:
     areas = np.asarray(sizes, dtype=np.float64)
     return int(areas.size), float(areas.max() / mask.size)
 
+def _compute_coefficient_of_variation(values: np.ndarray) -> float:
+    """Compute CV = std/mean, robust to near-zero means."""
+    mean_val = np.mean(values)
+    std_val = np.std(values)
+    if mean_val == 0 or np.abs(mean_val) < 1e-6:
+        return 0.0
+    return float(std_val / np.abs(mean_val))
+
 
 def extract_ndvi_features(
     image_input: ImageLike,
@@ -65,6 +73,8 @@ def extract_ndvi_features(
     p75 = float(np.percentile(valid_values, 75))
     iqr = p75 - p25
 
+    cv_ndvi = _compute_coefficient_of_variation(valid_values)
+
     ratio_above_03 = float(np.mean(valid_values > config.vegetation_threshold))
     ratio_above_05 = float(np.mean(valid_values > config.healthy_threshold))
     ratio_above_07 = float(np.mean(valid_values > config.dense_threshold))
@@ -73,9 +83,21 @@ def extract_ndvi_features(
     high_mask = ndvi > config.healthy_threshold
     num_patches, largest_patch_ratio = _connected_patch_ratio(high_mask.astype(np.uint8))
 
+    #  Entropy (vegetation diversity)
+    hist, _ = np.histogram(valid_values, bins=10)
+    prob = hist / (hist.sum() + 1e-8)
+    ndvi_entropy = float(-np.sum(prob * np.log(prob + 1e-8)))
+
     valid_monthly_mean = mean_ndvi
     vegetation_mask = ndvi > config.vegetation_threshold
     monthly_coverage = float(vegetation_mask.mean())
+
+     # Derived interaction features
+    health_index = float(mean_ndvi * ratio_above_05)
+    stress_index = float(std_ndvi * low_ratio)
+
+    # Greenup potential (relationship between healthy and any vegetation)
+    greenup_potential = float(ratio_above_05 / (ratio_above_03 + 1e-8))
 
     features: dict[str, float | int | str | None] = {
         "county_id": county_id,
@@ -86,6 +108,7 @@ def extract_ndvi_features(
         "ndvi_median": median_ndvi,
         "ndvi_max": max_ndvi,
         "ndvi_std": std_ndvi,
+        "ndvi_cv": cv_ndvi,
         "ndvi_p25": p25,
         "ndvi_p75": p75,
         "ndvi_iqr": iqr,
@@ -98,6 +121,10 @@ def extract_ndvi_features(
         "ndvi_largest_high_ndvi_patch_ratio": largest_patch_ratio,
         "ndvi_vegetation_coverage_ratio": monthly_coverage,
         "ndvi_valid_mean_proxy": valid_monthly_mean,
+        "ndvi_entropy": ndvi_entropy,
+         "ndvi_health_index": health_index,  
+        "ndvi_stress_index": stress_index,
+        "ndvi_greenup_potential": greenup_potential,
     }
 
     return pd.DataFrame([features])
@@ -114,6 +141,16 @@ def derive_ndvi_time_series_features(monthly_features: pd.DataFrame) -> pd.DataF
     monthly_change = mean_series.diff().fillna(0.0)
     slope = float(np.polyfit(months.to_numpy(), mean_series.to_numpy(), 1)[0]) if len(frame) > 1 else 0.0
     peak_idx = int(mean_series.idxmax())
+    
+    # Greenup rate (rate of increase to peak)
+    if peak_idx > 0 and months[peak_idx] - months[0] > 0:
+        greenup_rate = float((mean_series[peak_idx] - mean_series[0]) / (months[peak_idx] - months[0]))
+    else:
+        greenup_rate = 0.0
+    
+    # Coefficient of variation for the time series (stability metric)
+    ts_cv = float(mean_series.std() / (mean_series.mean() + 1e-8))
+    
     summary = {
         "ndvi_growth_slope": slope,
         "ndvi_peak_value": float(mean_series.max()),
@@ -123,5 +160,7 @@ def derive_ndvi_time_series_features(monthly_features: pd.DataFrame) -> pd.DataF
         "ndvi_stability_score": float(1.0 / (1.0 + monthly_change.std())),
         "ndvi_month_to_month_change_mean": float(monthly_change.mean()),
         "ndvi_month_to_month_change_std": float(monthly_change.std()),
+        "ndvi_greenup_rate": greenup_rate,
+        "ndvi_timeseries_cv": ts_cv,  
     }
     return pd.DataFrame([summary])
