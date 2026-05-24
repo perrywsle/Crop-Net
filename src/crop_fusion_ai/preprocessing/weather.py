@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from calendar import monthrange
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -28,20 +28,53 @@ class WeatherFeatureConfig:
 
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "date": ("date", "datetime", "day"),
-    "temperature_mean": ("temperature_mean", "temp_mean", "tmean", "mean_temp", "avg_temp"),
-    "temperature_max": ("temperature_max", "temp_max", "tmax", "max_temp"),
-    "temperature_min": ("temperature_min", "temp_min", "tmin", "min_temp"),
-    "precipitation": ("precipitation", "rainfall", "precip", "prcp"),
-    "humidity": ("humidity", "relative_humidity", "rh"),
-    "wind_speed": ("wind_speed", "wind", "ws"),
-    "solar_radiation": ("solar_radiation", "radiation", "swrad", "shortwave_radiation"),
+    "temperature_mean": (
+        "temperature_mean",
+        "temp_mean",
+        "tmean",
+        "mean_temp",
+        "avg_temp",
+        "avg temperature (k)",
+    ),
+    "temperature_max": (
+        "temperature_max",
+        "temp_max",
+        "tmax",
+        "max_temp",
+        "max temperature (k)",
+    ),
+    "temperature_min": (
+        "temperature_min",
+        "temp_min",
+        "tmin",
+        "min_temp",
+        "min temperature (k)",
+    ),
+    "precipitation": (
+        "precipitation",
+        "rainfall",
+        "precip",
+        "prcp",
+        "precipitation (kg m**-2)",
+    ),
+    "humidity": ("humidity", "relative_humidity", "rh", "relative humidity (%)"),
+    "wind_speed": ("wind_speed", "wind", "ws", "wind speed (m s**-1)"),
+    "solar_radiation": (
+        "solar_radiation",
+        "radiation",
+        "swrad",
+        "shortwave_radiation",
+        "downward shortwave radiation flux (w m**-2)",
+    ),
 }
 
 
 def _first_present_column(frame: pd.DataFrame, aliases: tuple[str, ...]) -> str | None:
+    normalized_lookup = {column.strip().lower(): column for column in frame.columns}
     for column in aliases:
-        if column in frame.columns:
-            return column
+        normalized = column.strip().lower()
+        if normalized in normalized_lookup:
+            return normalized_lookup[normalized]
     return None
 
 
@@ -96,23 +129,63 @@ def extract_weather_features(
     if "temperature_mean" not in frame.columns and not (
         "temperature_max" in frame.columns and "temperature_min" in frame.columns
     ):
-        msg = "Weather data must include temperature_mean or temperature_min/temperature_max"
+        msg = (
+            "Weather data must include temperature_mean or "
+            "temperature_min/temperature_max"
+        )
         raise ValueError(msg)
     if "precipitation" not in frame.columns:
         frame["precipitation"] = 0.0
 
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    if "Daily/Monthly" in frame.columns:
+        daily_mask = frame["Daily/Monthly"].astype(str).str.strip().str.lower() == "daily"
+        if daily_mask.any():
+            frame = frame[daily_mask].copy()
+
+    if "date" not in frame.columns:
+        year_column = _first_present_column(frame, ("year",))
+        month_column = _first_present_column(frame, ("month",))
+        day_column = _first_present_column(frame, ("day",))
+        if year_column is not None and month_column is not None and day_column is not None:
+            frame["date"] = pd.to_datetime(
+                frame[[year_column, month_column, day_column]].rename(
+                    columns={
+                        year_column: "year",
+                        month_column: "month",
+                        day_column: "day",
+                    }
+                ),
+                errors="coerce",
+            )
+        else:
+            msg = "Weather data must include a date column or year/month/day columns"
+            raise ValueError(msg)
+    else:
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date"]).copy()
     if frame.empty:
         msg = "Weather data does not contain any parseable dates"
         raise ValueError(msg)
 
     if "temperature_mean" not in frame.columns:
-        frame["temperature_mean"] = frame[["temperature_max", "temperature_min"]].mean(axis=1)
+        frame["temperature_mean"] = frame[["temperature_max", "temperature_min"]].mean(
+            axis=1
+        )
     if "temperature_max" not in frame.columns:
         frame["temperature_max"] = frame["temperature_mean"]
     if "temperature_min" not in frame.columns:
         frame["temperature_min"] = frame["temperature_mean"]
+
+    if (
+        frame[["temperature_mean", "temperature_max", "temperature_min"]]
+        .astype(np.float64)
+        .to_numpy()
+        .max(initial=0.0)
+        > 100.0
+    ):
+        for column in ("temperature_mean", "temperature_max", "temperature_min"):
+            frame[column] = frame[column].astype(np.float64) - 273.15
+
     if "humidity" not in frame.columns:
         frame["humidity"] = np.nan
     if "solar_radiation" not in frame.columns:
@@ -123,11 +196,21 @@ def extract_weather_features(
     frame["year"] = frame["date"].dt.year
     frame["month"] = frame["date"].dt.month
     frame["days_in_month"] = frame["date"].dt.days_in_month
-    frame["gdd"] = np.maximum(0.0, frame["temperature_mean"].astype(np.float64) - config.base_temperature_c)
-    frame["extreme_heat_day"] = frame["temperature_max"].astype(np.float64) >= config.heat_threshold_c
-    frame["frost_day"] = frame["temperature_min"].astype(np.float64) <= config.frost_threshold_c
-    frame["dry_day"] = frame["precipitation"].astype(np.float64) < config.dry_day_precip_mm
-    frame["rainy_day"] = frame["precipitation"].astype(np.float64) >= config.rainy_day_precip_mm
+    frame["gdd"] = np.maximum(
+        0.0, frame["temperature_mean"].astype(np.float64) - config.base_temperature_c
+    )
+    frame["extreme_heat_day"] = (
+        frame["temperature_max"].astype(np.float64) >= config.heat_threshold_c
+    )
+    frame["frost_day"] = (
+        frame["temperature_min"].astype(np.float64) <= config.frost_threshold_c
+    )
+    frame["dry_day"] = (
+        frame["precipitation"].astype(np.float64) < config.dry_day_precip_mm
+    )
+    frame["rainy_day"] = (
+        frame["precipitation"].astype(np.float64) >= config.rainy_day_precip_mm
+    )
     if frame["humidity"].notna().any():
         es = _saturation_vapor_pressure(frame["temperature_mean"].astype(np.float64))
         ea = es * (frame["humidity"].astype(np.float64) / 100.0)
@@ -167,7 +250,9 @@ def extract_weather_features(
                 "weather_temp_mean": _safe_series_mean(temp_mean),
                 "weather_temp_max": _safe_series_max(temp_max),
                 "weather_temp_min": _safe_series_min(temp_min),
-                "weather_temp_range": float(_safe_series_max(temp_max) - _safe_series_min(temp_min)),
+                "weather_temp_range": float(
+                    _safe_series_max(temp_max) - _safe_series_min(temp_min)
+                ),
                 "weather_gdd": float(group["gdd"].sum()),
                 "weather_extreme_heat_days": int(group["extreme_heat_day"].sum()),
                 "weather_cold_stress_degree_days": float(
@@ -176,16 +261,30 @@ def extract_weather_features(
                 "weather_total_precipitation": monthly_precipitation,
                 "weather_rainy_days": rainy_days,
                 "weather_dry_days": dry_days,
-                "weather_max_dry_streak": int(longest_true_streak(group["dry_day"].tolist())),
-                "weather_humidity_mean": float(humidity.mean()) if humidity.notna().any() else np.nan,
+                "weather_max_dry_streak": int(
+                    longest_true_streak(group["dry_day"].tolist())
+                ),
+                "weather_humidity_mean": float(humidity.mean())
+                if humidity.notna().any()
+                else np.nan,
                 "weather_vpd": mean_vpd,
-                "weather_wind_speed_mean": float(wind_speed.mean()) if wind_speed.notna().any() else np.nan,
-                "weather_wind_speed_max": float(wind_speed.max()) if wind_speed.notna().any() else np.nan,
-                "weather_solar_radiation_mean": float(solar_radiation.mean()) if solar_radiation.notna().any() else np.nan,
+                "weather_wind_speed_mean": float(wind_speed.mean())
+                if wind_speed.notna().any()
+                else np.nan,
+                "weather_wind_speed_max": float(wind_speed.max())
+                if wind_speed.notna().any()
+                else np.nan,
+                "weather_solar_radiation_mean": float(solar_radiation.mean())
+                if solar_radiation.notna().any()
+                else np.nan,
                 "weather_cumulative_solar_radiation": solar_sum,
-                "weather_precipitation_intensity": float(monthly_precipitation / max(rainy_days, 1)),
+                "weather_precipitation_intensity": float(
+                    monthly_precipitation / max(rainy_days, 1)
+                ),
                 "weather_weather_volatility_score": float(
-                    np.nanstd(temp_mean) + np.nanstd(precipitation) + np.nanstd(solar_radiation)
+                    np.nanstd(temp_mean)
+                    + np.nanstd(precipitation)
+                    + np.nanstd(solar_radiation)
                 ),
                 "weather_heat_stress_degree_days": float(
                     np.maximum(0.0, temp_mean - config.heat_threshold_c).sum()
@@ -195,7 +294,9 @@ def extract_weather_features(
             }
         )
 
-    monthly_frame = pd.DataFrame(monthly_rows).sort_values(["year", "month"]).reset_index(drop=True)
+    monthly_frame = (
+        pd.DataFrame(monthly_rows).sort_values(["year", "month"]).reset_index(drop=True)
+    )
 
     if climatology is None:
         baseline = monthly_frame.groupby("month", as_index=False).agg(
@@ -205,9 +306,20 @@ def extract_weather_features(
     else:
         baseline = climatology.copy()
         baseline_columns = set(baseline.columns)
-        if {"month", "weather_temperature_baseline", "weather_rainfall_baseline"} <= baseline_columns:
-            baseline = baseline.loc[:, ["month", "weather_temperature_baseline", "weather_rainfall_baseline"]]
-        elif {"month", "weather_temp_mean", "weather_total_precipitation"} <= baseline_columns:
+        if {
+            "month",
+            "weather_temperature_baseline",
+            "weather_rainfall_baseline",
+        } <= baseline_columns:
+            baseline = baseline.loc[
+                :,
+                ["month", "weather_temperature_baseline", "weather_rainfall_baseline"],
+            ]
+        elif {
+            "month",
+            "weather_temp_mean",
+            "weather_total_precipitation",
+        } <= baseline_columns:
             baseline = baseline.groupby("month", as_index=False).agg(
                 weather_temperature_baseline=("weather_temp_mean", "mean"),
                 weather_rainfall_baseline=("weather_total_precipitation", "mean"),
@@ -220,17 +332,29 @@ def extract_weather_features(
             raise ValueError(msg)
     monthly_frame = monthly_frame.merge(baseline, on="month", how="left")
     monthly_frame["weather_temperature_anomaly"] = (
-        monthly_frame["weather_temp_mean"] - monthly_frame["weather_temperature_baseline"]
+        monthly_frame["weather_temp_mean"]
+        - monthly_frame["weather_temperature_baseline"]
     )
     monthly_frame["weather_rainfall_anomaly"] = (
-        monthly_frame["weather_total_precipitation"] - monthly_frame["weather_rainfall_baseline"]
+        monthly_frame["weather_total_precipitation"]
+        - monthly_frame["weather_rainfall_baseline"]
     )
-    monthly_frame = monthly_frame.drop(columns=["weather_temperature_baseline", "weather_rainfall_baseline"])
+    monthly_frame = monthly_frame.drop(
+        columns=["weather_temperature_baseline", "weather_rainfall_baseline"]
+    )
 
-    monthly_frame["weather_rainfall_lag_1"] = monthly_frame.groupby("year")["weather_total_precipitation"].shift(1)
-    monthly_frame["weather_rainfall_lag_2"] = monthly_frame.groupby("year")["weather_total_precipitation"].shift(2)
-    monthly_frame["weather_temp_lag_1"] = monthly_frame.groupby("year")["weather_temp_mean"].shift(1)
-    monthly_frame["weather_vpd_lag_1"] = monthly_frame.groupby("year")["weather_vpd"].shift(1)
+    monthly_frame["weather_rainfall_lag_1"] = monthly_frame.groupby("year")[
+        "weather_total_precipitation"
+    ].shift(1)
+    monthly_frame["weather_rainfall_lag_2"] = monthly_frame.groupby("year")[
+        "weather_total_precipitation"
+    ].shift(2)
+    monthly_frame["weather_temp_lag_1"] = monthly_frame.groupby("year")[
+        "weather_temp_mean"
+    ].shift(1)
+    monthly_frame["weather_vpd_lag_1"] = monthly_frame.groupby("year")[
+        "weather_vpd"
+    ].shift(1)
 
     return monthly_frame
 
@@ -246,22 +370,40 @@ def derive_weather_time_series_features(monthly_features: pd.DataFrame) -> pd.Da
     precip_series = frame["weather_total_precipitation"].astype(np.float64)
     vpd_series = frame["weather_vpd"].astype(np.float64)
 
-    temp_slope = float(np.polyfit(months.to_numpy(), temp_series.to_numpy(), 1)[0]) if len(frame) > 1 else 0.0
-    precip_slope = float(np.polyfit(months.to_numpy(), precip_series.to_numpy(), 1)[0]) if len(frame) > 1 else 0.0
-    vpd_slope = float(np.polyfit(months.to_numpy(), vpd_series.fillna(0.0).to_numpy(), 1)[0]) if len(frame) > 1 else 0.0
+    temp_slope = (
+        float(np.polyfit(months.to_numpy(), temp_series.to_numpy(), 1)[0])
+        if len(frame) > 1
+        else 0.0
+    )
+    precip_slope = (
+        float(np.polyfit(months.to_numpy(), precip_series.to_numpy(), 1)[0])
+        if len(frame) > 1
+        else 0.0
+    )
+    vpd_slope = (
+        float(np.polyfit(months.to_numpy(), vpd_series.fillna(0.0).to_numpy(), 1)[0])
+        if len(frame) > 1
+        else 0.0
+    )
 
     summary = {
         "weather_temperature_trend_slope": temp_slope,
         "weather_rainfall_trend_slope": precip_slope,
         "weather_vpd_trend_slope": vpd_slope,
-        "weather_total_precipitation_auc": float(np.trapezoid(precip_series.to_numpy(), months.to_numpy()))
+        "weather_total_precipitation_auc": float(
+            np.trapezoid(precip_series.to_numpy(), months.to_numpy())
+        )
         if len(frame) > 1
         else float(precip_series.iloc[0]),
-        "weather_peak_rainfall_month": int(frame.loc[int(precip_series.idxmax()), "month"]),
+        "weather_peak_rainfall_month": int(
+            frame.loc[int(precip_series.idxmax()), "month"]
+        ),
         "weather_rainfall_seasonality_index": float(
             precip_series.std() / (precip_series.mean() + 1e-6)
         ),
-        "weather_heat_stress_total": float(frame["weather_heat_stress_degree_days"].sum()),
+        "weather_heat_stress_total": float(
+            frame["weather_heat_stress_degree_days"].sum()
+        ),
         "weather_drought_severity_max": float(frame["weather_drought_index"].max()),
     }
     return pd.DataFrame([summary])

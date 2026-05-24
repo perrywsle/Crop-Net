@@ -65,3 +65,31 @@ CropNet modalities:
 
 The GUI provides separate upload tabs for AG, NDVI, and weather CSV inputs and
 shows the extracted feature table for each modality.
+
+### CropNet JSONL export
+
+To read a small local CropNet slice for `2022`, auto-download any missing
+CropNet files, and export modality-specific JSONL splits, run:
+
+```bash
+python scripts/preprocessing.py \
+  --base-dir /mnt/data/CropNet \
+  --year 2022 \
+  --fips-codes 10003 22007 \
+  --output-dir data/processed \
+  --cache-dir data/cache/cropnet \
+  --target yield
+```
+
+This writes:
+
+- `data/processed/ag/train.jsonl`
+- `data/processed/ag/validation.jsonl`
+- `data/processed/ag/test.jsonl`
+- `data/processed/ndvi/train.jsonl`
+- `data/processed/ndvi/validation.jsonl`
+- `data/processed/ndvi/test.jsonl`
+- `data/processed/weather/train.jsonl`
+- `data/processed/weather/validation.jsonl`
+- `data/processed/weather/test.jsonl`
+- `data/processed/manifest.json`
