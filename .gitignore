@@ -1,8 +1,50 @@
 .venv/
+venv/
+env/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 *.pyc
+
+# datasets and caches
+raw_chunks/
+feature_cache/
+.cache/
+huggingface/
+*.h5
+*.hdf5
+
+# large model/output artifacts
+*.pt
+*.pth
+*.ckpt
+*.zip
+*.tar
+*.tar.gz
+outputs/
+artifacts/
+tmp/
+dev_shm/
+
+# secrets
+.env
+*.env
+.env.*
+*secret*
+*token*
+*credential*
+*.key
+id_rsa
+id_ed25519
+*.pem
+*.ppk
+
+# repo-local generated data
 /data
 /tutorial
+
+# allow small report tables intentionally staged for sync
+!reports/
+!reports/tables/
+!reports/tables/*.csv
