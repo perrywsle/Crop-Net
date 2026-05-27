@@ -13,6 +13,9 @@ Forecast missing future months in a target year from partial-year observations u
 - Best NDVI raw behavior: `SARIMA`
 - Best weather raw behavior: `LSTM seasonal_residual`
 
+## New to the Project?
+If you are new to this project, read `docs/PROJECT_QUICK_BRIEF.md` first, then `docs/PROJECT_UNDERSTANDING_GUIDE.md`.
+
 ## Developer Handover Quick Start
 ### Branch purpose
 This branch keeps the validated research workflow intact while adding a cleaner Python package, sample configs, example scripts, small checkpoints, and a small set of report figures.

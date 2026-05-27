@@ -26,7 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # known_months=1 means January is observed and the script forecasts February-December.
     args = build_parser().parse_args()
+    # The input table must include county_id, crop_type, year, month, and the selected feature columns.
     monthly = load_monthly_features(args.monthly_table)
     predictor = BlankFillPredictor.from_artifacts(args.checkpoint, args.scaler, args.config)
     predictions = predictor.predict_remaining_year(monthly, year=args.year, known_months=args.known_months)

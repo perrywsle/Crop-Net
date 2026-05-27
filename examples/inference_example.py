@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # The checkpoint, scaler, and config should come from the same trained run family.
     args = build_parser().parse_args()
     predictor = BlankFillPredictor.from_artifacts(args.checkpoint, args.scaler, args.config)
     print("Loaded predictor")

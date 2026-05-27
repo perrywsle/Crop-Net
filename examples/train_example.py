@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # The config controls model_name, feature_group, target_mode, and where the legacy training wrapper writes outputs.
     args = build_parser().parse_args()
     trainer = CropNetTrainer.from_config(args.config)
     if args.mode == "fit":
