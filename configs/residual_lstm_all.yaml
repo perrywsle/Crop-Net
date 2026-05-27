@@ -1,0 +1,28 @@
+model_name: lstm
+target_mode: seasonal_residual
+loss_mode: raw_mse
+feature_group: all
+seq_len: 6
+hidden_size: 64
+num_layers: 1
+dropout: 0.0
+batch_size: 64
+learning_rate: 0.001
+weight_decay: 0.0001
+max_epochs: 80
+patience: 10
+known_months: [0, 1, 3, 6, 9]
+blank_fill_year: 2021
+checkpoint_path: weights/lstm_best.pt
+scaler_path: weights/scaler.csv
+run_dir: outputs/experiments/ia30_seq6_seasonal_residual_blankfill
+output_dir: outputs/experiments/handover_residual_lstm_all
+python_bin: python
+legacy_script_path: scripts/research/cropnet_feature_forecasting_v12_server.py
+device: cpu
+state_codes: [IA]
+years: [2017, 2018, 2019, 2020, 2021]
+train_years: [2017, 2018, 2019]
+val_years: [2020]
+test_years: [2021]
+max_counties: 30
