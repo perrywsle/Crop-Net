@@ -1,0 +1,16 @@
+{
+  "repo_id": "CropNet/CropNet",
+  "county_id": "55141",
+  "crop": "corn",
+  "years": [
+    2021
+  ],
+  "state_abbr": "WI",
+  "allow_patterns": [
+    "USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv",
+    "Sentinel-2 Imagery/data/AG/2021/WI/*.h5",
+    "Sentinel-2 Imagery/data/NDVI/2021/WI/*.h5",
+    "WRF-HRRR Computed Dataset/data/2021/WI/*.csv"
+  ],
+  "output_dir": "/mnt/c/Users/felix/Documents/GITHUB/Crop-Net/data/sample_data"
+}

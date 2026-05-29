@@ -33,3 +33,34 @@ def coerce_monthly_features(frame: pd.DataFrame, feature_group: str = "all") -> 
     out["year"] = out["year"].astype(int)
     out["month"] = out["month"].astype(int)
     return out.sort_values(["county_id", "crop_type", "year", "month"]).reset_index(drop=True)
+
+
+def prepare_monthly_features(frame: pd.DataFrame, feature_names: list[str]) -> pd.DataFrame:
+    """Coerce and impute a monthly feature frame for inference."""
+    missing = [col for col in META_COLS + feature_names if col not in frame.columns]
+    if missing:
+        raise ValueError(f"Monthly feature table is missing required model columns: {missing}")
+
+    coerced = frame[META_COLS + feature_names].copy()
+    coerced["county_id"] = coerced["county_id"].astype(str).str.zfill(5)
+    coerced["crop_type"] = coerced["crop_type"].astype(str)
+    coerced["year"] = coerced["year"].astype(int)
+    coerced["month"] = coerced["month"].astype(int)
+
+    if coerced.empty:
+        return coerced
+
+    filled_groups: list[pd.DataFrame] = []
+    for _, group in coerced.groupby(["county_id", "crop_type"], sort=True):
+        group = group.sort_values(["year", "month"]).reset_index(drop=True).copy()
+        group[feature_names] = (
+            group[feature_names].interpolate(limit_direction="both").ffill().bfill()
+        )
+        medians = group[feature_names].median(numeric_only=True)
+        group[feature_names] = group[feature_names].fillna(medians)
+        group[feature_names] = group[feature_names].fillna(0.0)
+        filled_groups.append(group)
+
+    return pd.concat(filled_groups, ignore_index=True).sort_values(
+        ["county_id", "crop_type", "year", "month"]
+    ).reset_index(drop=True)

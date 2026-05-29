@@ -41,7 +41,6 @@ id_ed25519
 *.ppk
 
 # repo-local generated data
-/data
 /tutorial
 
 # allow small staged handover artifacts
@@ -64,3 +63,4 @@ id_ed25519
 !weights/config.json
 !weights/run_status.json
 !weights/feature_contract_diagnostic.json
+/data/cache

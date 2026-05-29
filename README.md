@@ -45,6 +45,39 @@ python examples/inference_example.py --checkpoint weights/lstm_best.pt --scaler 
 python examples/blank_fill_example.py --monthly-table path/to/monthly_features.parquet --checkpoint weights/lstm_best.pt --scaler weights/scaler.csv --config configs/residual_lstm_all.yaml --year 2021 --known-months 1 --output outputs/blank_fill_predictions.csv
 ```
 
+### Desktop GUI
+```bash
+python -m crop_fusion_ai.gui.app
+```
+
+The GUI expects a folder that contains modality subfolders such as:
+```text
+sample_data/
+  ag/
+    2017_12_21.png
+  ndvi/
+    2017_12_21.png
+  weather/
+    2017_12.csv
+```
+
+The app scans the directory recursively, extracts monthly features, and shows a 12-month autoregressive forecast in tabs.
+
+### Download sample data
+```bash
+python fetch_data.py --county-id 01003 --crop corn --years 2017 2018 2019 2020 2021 2022
+```
+
+### Convert GUI sample data
+```bash
+python convert_data.py --source data/sample_data --output test_data
+```
+
+### List available counties
+```bash
+python list_county.py --years 2017 2018 2019 2020 2021 2022
+```
+
 ### Training wrapper example
 ```bash
 python examples/train_example.py --config configs/residual_lstm_all.yaml --mode fit

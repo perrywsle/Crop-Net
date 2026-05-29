@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .blank_fill import rollout_blank_fill
+from .blank_fill import rollout_autoregressive, rollout_blank_fill
 from .config import load_config
 from .features import selected_feature_columns
 from .models import CropNetModelFactory
@@ -64,6 +64,21 @@ class BlankFillPredictor:
 
     def predict_remaining_year(self, monthly_features: pd.DataFrame, year: int, known_months: int) -> pd.DataFrame:
         result = rollout_blank_fill(self, monthly_features=monthly_features, year=year, known_months=known_months)
+        self.last_predictions = result.predictions
+        return result.predictions
+
+    def predict_future_months(
+        self,
+        monthly_features: pd.DataFrame,
+        horizon: int = 12,
+        progress=None,
+    ) -> pd.DataFrame:
+        result = rollout_autoregressive(
+            self,
+            monthly_features=monthly_features,
+            horizon=horizon,
+            progress=progress,
+        )
         self.last_predictions = result.predictions
         return result.predictions
 

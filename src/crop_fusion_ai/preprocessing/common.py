@@ -204,3 +204,31 @@ def combine_modality_feature_frames(*frames: pd.DataFrame) -> pd.DataFrame:
         lambda left, right: pd.merge(left, right, on=metadata_columns, how="outer"),
         valid_frames,
     )
+
+
+def aggregate_monthly_feature_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Collapse duplicate monthly rows by averaging numeric feature columns."""
+    if frame.empty:
+        return pd.DataFrame()
+
+    working = frame.copy()
+    metadata_columns = ["county_id", "crop_type", "year", "month"]
+    for column in metadata_columns:
+        if column not in working.columns:
+            working[column] = pd.NA
+
+    numeric_columns = [
+        column
+        for column in working.columns
+        if column not in metadata_columns and pd.api.types.is_numeric_dtype(working[column])
+    ]
+    if not numeric_columns:
+        return working.loc[:, metadata_columns].drop_duplicates().reset_index(drop=True)
+
+    aggregated = (
+        working.groupby(metadata_columns, dropna=False, as_index=False)[numeric_columns]
+        .mean(numeric_only=True)
+        .sort_values(metadata_columns)
+        .reset_index(drop=True)
+    )
+    return aggregated
