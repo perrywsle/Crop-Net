@@ -62,8 +62,15 @@ def extract_ndvi_features(
     valid_values = _valid_ndvi_values(ndvi, config)
 
     if valid_values.size == 0:
-        msg = "No valid NDVI pixels were found"
-        raise ValueError(msg)
+        fallback_values = ndvi[np.isfinite(ndvi)]
+        if fallback_values.size == 0:
+            msg = "No valid NDVI pixels were found"
+            raise ValueError(msg)
+        valid_values = np.clip(
+            fallback_values.astype(np.float64),
+            config.valid_min,
+            config.valid_max,
+        )
 
     mean_ndvi = float(np.mean(valid_values))
     median_ndvi = float(np.median(valid_values))

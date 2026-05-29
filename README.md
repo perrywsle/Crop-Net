@@ -1,95 +1,95 @@
-# Multi-Modal Crop Health and Yield Prediction System
+# CropNet Blank-Fill Forecasting Handover
 
-This repository contains the scaffold for a university AI engineering project
-that will combine:
+This branch packages the active COS40007 CropNet forecasting workflow in a more teammate-friendly form without removing the original research scripts.
 
-- A plant health image classifier.
-- A CropNet-style crop yield prediction model.
-- A preprocessing stage for AG, NDVI, and weather modalities.
-- A late-fusion simulation pipeline using image-derived `health_score` and
-  `image_confidence` features.
-- A Tkinter desktop demo UI.
+## Project Objective
+Forecast missing future months in a target year from partial-year observations using monthly AG, NDVI, and weather features.
 
-Training and inference implementations are intentionally not included yet. This
-initial version focuses on clean project structure, configuration, schemas, and
-tooling.
+## Current Best Findings
+- Best raw RMSE for the main `known_months=1` industrial case: `LSTM seasonal_residual`
+- Best normalized RMSE: `ensemble_mean`
+- Best classical model: `SARIMA`
+- Best AG raw behavior: `seasonal_last_year`
+- Best NDVI raw behavior: `SARIMA`
+- Best weather raw behavior: `LSTM seasonal_residual`
 
-## Project Layout
+## New to the Project?
+If you are new to this project, read `docs/PROJECT_QUICK_BRIEF.md` first, then `docs/PROJECT_UNDERSTANDING_GUIDE.md`.
 
+## Developer Handover Quick Start
+### Branch purpose
+This branch keeps the validated research workflow intact while adding a cleaner Python package, sample configs, example scripts, small checkpoints, and a small set of report figures.
+
+### Folder structure
+- `src/cropnet_forecasting/`: cleaner package modules
+- `examples/`: training and inference examples
+- `configs/`: sample YAML configs
+- `weights/`: small checkpoints and scaler/config artifacts
+- `reports/`: small markdown summaries, CSV tables, and a few figures
+- `scripts/research/`: legacy research workflow scripts preserved as reference
+
+### Environment setup
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Inference example
+```bash
+python examples/inference_example.py --checkpoint weights/lstm_best.pt --scaler weights/scaler.csv --config configs/residual_lstm_all.yaml
+```
+
+### Blank-fill example
+```bash
+python examples/blank_fill_example.py --monthly-table path/to/monthly_features.parquet --checkpoint weights/lstm_best.pt --scaler weights/scaler.csv --config configs/residual_lstm_all.yaml --year 2021 --known-months 1 --output outputs/blank_fill_predictions.csv
+```
+
+### Desktop GUI
+```bash
+python -m crop_fusion_ai.gui.app
+```
+
+The GUI expects a folder that contains modality subfolders such as:
 ```text
-src/crop_fusion_ai/     Python package
-tests/                  Automated tests
-data/raw/               Original datasets
-data/processed/         Prepared datasets and derived features
-models/                 Saved model artifacts
-reports/                Metrics, figures, and experiment notes
+sample_data/
+  ag/
+    2017_12_21.png
+  ndvi/
+    2017_12_21.png
+  weather/
+    2017_12.csv
 ```
 
-## Development
+The app scans the directory recursively, extracts monthly features, and shows a 12-month autoregressive forecast in tabs.
 
-Install dependencies:
-
+### Download sample data
 ```bash
-python -m pip install -r requirements.txt
+python fetch_data.py --county-id 01003 --crop corn --years 2017 2018 2019 2020 2021 2022
 ```
 
-Run checks:
-
+### Convert GUI sample data
 ```bash
-ruff check .
-mypy src
-pytest
+python convert_data.py --source data/sample_data --output test_data
 ```
 
-Launch the desktop preprocessing GUI:
-
+### List available counties
 ```bash
-crop-fusion-gui
+python list_county.py --years 2017 2018 2019 2020 2021 2022
 ```
 
-To generate small GUI-ready demo inputs under `data/raw/images` and
-`data/raw/tabular`:
-
+### Training wrapper example
 ```bash
-python scripts/make_gui_demo_data.py
+python examples/train_example.py --config configs/residual_lstm_all.yaml --mode fit
 ```
 
-## Preprocessing
+### Where weights and figures live
+- `weights/`
+- `reports/figures/`
+- `reports/README_RESULTS_SUMMARY.md`
 
-The preprocessing package now exposes stable feature extractors for the three
-CropNet modalities:
+### Legacy research code
+The original validated workflow remains in `scripts/research/cropnet_feature_forecasting_v12_server.py`.
 
-- `crop_fusion_ai.preprocessing.extract_ag_features`
-- `crop_fusion_ai.preprocessing.extract_ndvi_features`
-- `crop_fusion_ai.preprocessing.extract_weather_features`
-
-The GUI provides separate upload tabs for AG, NDVI, and weather CSV inputs and
-shows the extracted feature table for each modality.
-
-### CropNet JSONL export
-
-To read a small local CropNet slice for `2022`, auto-download any missing
-CropNet files, and export modality-specific JSONL splits, run:
-
-```bash
-python scripts/preprocessing.py \
-  --base-dir /mnt/data/CropNet \
-  --year 2022 \
-  --fips-codes 10003 22007 \
-  --output-dir data/processed \
-  --cache-dir data/cache/cropnet \
-  --target yield
-```
-
-This writes:
-
-- `data/processed/ag/train.jsonl`
-- `data/processed/ag/validation.jsonl`
-- `data/processed/ag/test.jsonl`
-- `data/processed/ndvi/train.jsonl`
-- `data/processed/ndvi/validation.jsonl`
-- `data/processed/ndvi/test.jsonl`
-- `data/processed/weather/train.jsonl`
-- `data/processed/weather/validation.jsonl`
-- `data/processed/weather/test.jsonl`
-- `data/processed/manifest.json`
+### What not to commit
+Do not commit raw datasets, `raw_chunks/`, `feature_cache/`, HDF5 files, virtual environments, large output directories, or secrets.

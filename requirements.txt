@@ -1,9 +1,15 @@
 numpy>=1.26
 pandas>=2.2
+scikit-learn>=1.4
+torch>=2.1
+matplotlib>=3.8
+pyarrow>=16.0
+statsmodels>=0.14
+pyyaml>=6.0
+tqdm>=4.66
 huggingface_hub>=0.24
 pydantic>=2.7
 pydantic-settings>=2.2
-scikit-learn>=1.4
 pillow>=10.3
 
 # Development tools
