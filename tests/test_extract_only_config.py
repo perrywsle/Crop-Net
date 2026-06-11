@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -90,3 +91,29 @@ def test_extract_only_rejects_blank_fill_eval(
     args = server.parse_args()
     with pytest.raises(ValueError, match="extract-only"):
         server.build_config(args)
+
+
+def test_extract_only_environment_logging_does_not_require_torch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Extraction-only environment logging should tolerate the Torch placeholder."""
+    server = _load_server_module()
+    monkeypatch.setattr(server, "torch", types.SimpleNamespace())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "cropnet_feature_forecasting_v12_server.py",
+            "--full-run",
+            "--extract-only",
+            "--output-dir",
+            str(tmp_path / "extract_only"),
+            "--years",
+            "2021",
+            "2022",
+        ],
+    )
+    cfg = server.build_config(server.parse_args())
+
+    server.print_environment(cfg)

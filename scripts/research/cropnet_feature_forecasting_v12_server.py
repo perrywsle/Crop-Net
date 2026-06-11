@@ -573,13 +573,16 @@ def ensure_package(import_name: str, package_spec: str) -> None:
 def print_environment(cfg: RuntimeConfig) -> None:
     LOGGER.info("Python: %s", sys.version.replace("\n", " "))
     LOGGER.info("Platform: %s", platform.platform())
-    LOGGER.info("PyTorch: %s", torch.__version__)
-    LOGGER.info("CUDA available: %s", torch.cuda.is_available())
-    LOGGER.info("CUDA version: %s", torch.version.cuda)
-    if torch.cuda.is_available():
-        LOGGER.info("GPU count: %s", torch.cuda.device_count())
-        for idx in range(torch.cuda.device_count()):
-            LOGGER.info("GPU[%s]: %s", idx, torch.cuda.get_device_name(idx))
+    if hasattr(torch, "__version__"):
+        LOGGER.info("PyTorch: %s", torch.__version__)
+        LOGGER.info("CUDA available: %s", torch.cuda.is_available())
+        LOGGER.info("CUDA version: %s", torch.version.cuda)
+        if torch.cuda.is_available():
+            LOGGER.info("GPU count: %s", torch.cuda.device_count())
+            for idx in range(torch.cuda.device_count()):
+                LOGGER.info("GPU[%s]: %s", idx, torch.cuda.get_device_name(idx))
+    else:
+        LOGGER.info("PyTorch: skipped for extraction-only mode")
     LOGGER.info("Base dir: %s", cfg.base_dir)
     LOGGER.info("Output dir: %s", cfg.output_dir)
     LOGGER.info("Run name: %s", cfg.run_name or "(none)")
