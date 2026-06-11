@@ -3153,7 +3153,8 @@ def run_eval_only(cfg: RuntimeConfig) -> None:
 
 def run_pipeline(cfg: RuntimeConfig) -> None:
     np.random.seed(cfg.seed)
-    torch.manual_seed(cfg.seed)
+    if hasattr(torch, "manual_seed"):
+        torch.manual_seed(cfg.seed)
     ensure_repo_extractors(cfg)
 
     existing_monthly = try_load_existing_monthly_artifacts(cfg)

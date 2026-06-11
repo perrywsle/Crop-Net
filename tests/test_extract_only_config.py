@@ -7,6 +7,8 @@ import sys
 import types
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -99,6 +101,7 @@ def test_extract_only_environment_logging_does_not_require_torch(
 ) -> None:
     """Extraction-only environment logging should tolerate the Torch placeholder."""
     server = _load_server_module()
+    monkeypatch.setattr(server, "np", np)
     monkeypatch.setattr(server, "torch", types.SimpleNamespace())
     monkeypatch.setattr(
         sys,
@@ -117,3 +120,40 @@ def test_extract_only_environment_logging_does_not_require_torch(
     cfg = server.build_config(server.parse_args())
 
     server.print_environment(cfg)
+
+
+def test_extract_only_pipeline_entry_does_not_seed_torch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The extraction-only pipeline entry should not call Torch before returning."""
+    server = _load_server_module()
+    monkeypatch.setattr(server, "np", np)
+    monkeypatch.setattr(server, "torch", types.SimpleNamespace())
+    monkeypatch.setattr(server, "ensure_repo_extractors", lambda cfg: None)
+    monkeypatch.setattr(
+        server,
+        "try_load_existing_monthly_artifacts",
+        lambda cfg: (
+            pd.DataFrame({"county_id": ["19001"], "year": [2022], "month": [4], "ag_green_pixel_ratio": [1.0]}),
+            ["ag_green_pixel_ratio"],
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "cropnet_feature_forecasting_v12_server.py",
+            "--full-run",
+            "--extract-only",
+            "--output-dir",
+            str(tmp_path / "extract_only"),
+            "--years",
+            "2021",
+            "2022",
+        ],
+    )
+    cfg = server.build_config(server.parse_args())
+
+    server.run_pipeline(cfg)
