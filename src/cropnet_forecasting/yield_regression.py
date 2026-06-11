@@ -984,7 +984,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--usda-path",
         type=Path,
-        nargs="*",
+        nargs="+",
+        action="append",
         default=None,
         help="One or more USDA county yield CSV files. If omitted, matching USDA files are discovered automatically.",
     )
@@ -1027,14 +1028,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def flatten_usda_path_groups(usda_path_groups: list[list[Path]] | None) -> list[Path] | None:
+    if not usda_path_groups:
+        return None
+    return [path for group in usda_path_groups for path in group]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    usda_paths = flatten_usda_path_groups(args.usda_path)
 
     try:
         run_yield_regression(
             monthly_path=args.monthly_path,
-            usda_paths=args.usda_path,
+            usda_paths=usda_paths,
             output_dir=args.output_dir,
             crop_type=args.crop_type,
             feature_group=args.feature_group,

@@ -17,6 +17,7 @@ from cropnet_forecasting import yield_regression
 from cropnet_forecasting.yield_regression import (
     aggregate_growing_season_features,
     build_model_pipelines,
+    flatten_usda_path_groups,
     read_monthly_features,
     run_yield_regression,
 )
@@ -38,6 +39,26 @@ def _monthly_rows() -> list[dict[str, object]]:
                     }
                 )
     return rows
+
+
+def test_repeated_usda_path_flags_are_flattened() -> None:
+    parser = yield_regression.build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "--usda-path",
+            "corn_2021.csv",
+            "--usda-path",
+            "corn_2022.csv",
+            "corn_2023.csv",
+        ]
+    )
+
+    assert flatten_usda_path_groups(args.usda_path) == [
+        Path("corn_2021.csv"),
+        Path("corn_2022.csv"),
+        Path("corn_2023.csv"),
+    ]
 
 
 def _write_usda(path: Path) -> None:
