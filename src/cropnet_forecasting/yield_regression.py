@@ -50,15 +50,19 @@ if __package__ in {None, ""}:
     if str(PACKAGE_ROOT) not in sys.path:
         sys.path.insert(0, str(PACKAGE_ROOT))
     from cropnet_forecasting.data import read_table
-    from cropnet_forecasting.features import META_COLS, selected_feature_columns
+    from cropnet_forecasting.features import FEATURE_GROUP_SELECTIONS, META_COLS, selected_feature_columns
 else:  # pragma: no cover - exercised when run as a module
     from .data import read_table
-    from .features import META_COLS, selected_feature_columns
+    from .features import FEATURE_GROUP_SELECTIONS, META_COLS, selected_feature_columns
 
 GROWING_SEASON_MONTHS = (4, 5, 6, 7, 8, 9)
 DEFAULT_MIN_OVERLAP_ROWS = 12
 DEFAULT_OUTPUT_SUBDIR = "yield_baseline"
+DEFAULT_MAX_MISSING_FRACTION = 0.20
+DEFAULT_CORRELATION_THRESHOLD = 0.995
+FEATURE_GROUP_BENCHMARKS = ("ag", "ndvi", "weather", "ag_ndvi", "ndvi_weather", "all")
 TARGET_COLUMNS = {"yield_bu_acre", "target_unit"}
+ANNUAL_FEATURE_SUFFIXES = ("_slope", "_delta", "_amplitude")
 GENERATED_FORECAST_COLUMNS = {
     "forecast_step",
     "known_months",
@@ -101,6 +105,10 @@ class RegressionArtifacts:
     metadata_path: Path
     importance_path: Path
     summary_path: Path
+    feature_group_benchmark_path: Path
+    year_cv_benchmark_path: Path
+    pruning_report_path: Path
+    residuals_path: Path
 
 
 def _json_default(value: Any) -> Any:
@@ -414,6 +422,82 @@ def build_training_frame(
     return merged.reset_index(drop=True), feature_cols, ""
 
 
+def base_feature_name(feature_name: str) -> str:
+    for suffix in ANNUAL_FEATURE_SUFFIXES:
+        if feature_name.endswith(suffix):
+            return feature_name[: -len(suffix)]
+    return feature_name
+
+
+def annualized_columns_for_group(feature_cols: list[str], feature_group: str) -> list[str]:
+    base_features = set(selected_feature_columns(feature_group))
+    return [col for col in feature_cols if base_feature_name(col) in base_features]
+
+
+def prune_feature_columns(
+    frame: pd.DataFrame,
+    feature_cols: list[str],
+    *,
+    max_missing_fraction: float = DEFAULT_MAX_MISSING_FRACTION,
+    correlation_threshold: float = DEFAULT_CORRELATION_THRESHOLD,
+) -> tuple[list[str], dict[str, Any]]:
+    """Drop deterministic low-information columns before fitting yield models."""
+    if not feature_cols:
+        raise ValueError("No feature columns were provided for pruning.")
+
+    numeric = frame[feature_cols].apply(pd.to_numeric, errors="coerce")
+    missing_fraction = numeric.isna().mean()
+    sparse = [
+        col
+        for col in feature_cols
+        if float(missing_fraction.get(col, 1.0)) > max_missing_fraction
+    ]
+    candidates = [col for col in feature_cols if col not in sparse]
+    zero_variance = [
+        col
+        for col in candidates
+        if numeric[col].dropna().nunique() <= 1
+    ]
+    candidates = [col for col in candidates if col not in zero_variance]
+
+    correlated: list[dict[str, Any]] = []
+    correlated_drop: set[str] = set()
+    if len(candidates) >= 2:
+        corr = numeric[candidates].corr().abs()
+        for idx, left in enumerate(candidates):
+            if left in correlated_drop:
+                continue
+            for right in candidates[idx + 1 :]:
+                if right in correlated_drop:
+                    continue
+                value = corr.loc[left, right]
+                if pd.notna(value) and float(value) >= correlation_threshold:
+                    correlated_drop.add(right)
+                    correlated.append(
+                        {
+                            "dropped": right,
+                            "kept": left,
+                            "correlation": float(value),
+                        }
+                    )
+
+    kept = [col for col in candidates if col not in correlated_drop]
+    if not kept:
+        raise ValueError("Feature pruning removed all candidate columns.")
+
+    report = {
+        "input_feature_count": len(feature_cols),
+        "kept_feature_count": len(kept),
+        "max_missing_fraction": max_missing_fraction,
+        "correlation_threshold": correlation_threshold,
+        "dropped_sparse": sparse,
+        "dropped_zero_variance": zero_variance,
+        "dropped_correlated": correlated,
+        "kept_features": kept,
+    }
+    return kept, report
+
+
 def overlap_summary(monthly_frame: pd.DataFrame, usda_frame: pd.DataFrame) -> dict[str, Any]:
     monthly_pairs_frame = monthly_frame[["county_id", "year"]].dropna().copy()
     monthly_pairs_frame["county_id"] = monthly_pairs_frame["county_id"].astype(str)
@@ -533,6 +617,130 @@ def build_model_pipelines(
     return models
 
 
+def build_model_candidate_pipelines(random_state: int = 42) -> dict[str, list[Pipeline]]:
+    base_steps = [
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+    ]
+    return {
+        "Ridge": [
+            Pipeline(base_steps + [("model", Ridge(alpha=alpha))])
+            for alpha in (0.1, 1.0, 5.0, 20.0)
+        ],
+        "RandomForest": [
+            Pipeline(
+                base_steps
+                + [
+                    (
+                        "model",
+                        RandomForestRegressor(
+                            n_estimators=300,
+                            max_depth=max_depth,
+                            min_samples_leaf=min_samples_leaf,
+                            random_state=random_state,
+                            n_jobs=-1,
+                        ),
+                    )
+                ]
+            )
+            for max_depth, min_samples_leaf in [(None, 1), (8, 2), (12, 3)]
+        ],
+        "ExtraTrees": [
+            Pipeline(
+                base_steps
+                + [
+                    (
+                        "model",
+                        ExtraTreesRegressor(
+                            n_estimators=300,
+                            max_depth=max_depth,
+                            min_samples_leaf=min_samples_leaf,
+                            random_state=random_state,
+                            n_jobs=-1,
+                        ),
+                    )
+                ]
+            )
+            for max_depth, min_samples_leaf in [(None, 1), (8, 2), (12, 3)]
+        ],
+    }
+
+
+def choose_validation_split(
+    train_df: pd.DataFrame,
+    *,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    if len(train_df) < 6:
+        return None
+    years = sorted(pd.to_numeric(train_df["year"], errors="coerce").dropna().astype(int).unique())
+    if len(years) >= 2:
+        validation_year = years[-1]
+        tune_train = train_df[train_df["year"].astype(int) < validation_year].copy()
+        tune_valid = train_df[train_df["year"].astype(int) == validation_year].copy()
+        if not tune_train.empty and not tune_valid.empty:
+            return tune_train, tune_valid
+    tune_train, tune_valid = train_test_split(
+        train_df,
+        test_size=0.25,
+        random_state=random_state,
+    )
+    if tune_train.empty or tune_valid.empty:
+        return None
+    return tune_train.copy(), tune_valid.copy()
+
+
+def select_model_pipelines(
+    train_df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    *,
+    random_state: int = 42,
+    include_optional_models: bool = False,
+    tune_hyperparameters: bool = True,
+) -> dict[str, Pipeline]:
+    if not tune_hyperparameters:
+        return build_model_pipelines(
+            random_state=random_state,
+            include_optional_models=include_optional_models,
+        )
+
+    split = choose_validation_split(train_df, random_state=random_state)
+    if split is None:
+        return build_model_pipelines(
+            random_state=random_state,
+            include_optional_models=include_optional_models,
+        )
+    tune_train, tune_valid = split
+    selected: dict[str, Pipeline] = {}
+    for family, candidates in build_model_candidate_pipelines(random_state).items():
+        best_score = float("inf")
+        best_pipeline = candidates[0]
+        for candidate in candidates:
+            candidate.fit(tune_train[feature_cols], tune_train[target_col].to_numpy(dtype=float))
+            predictions = candidate.predict(tune_valid[feature_cols])
+            score = float(
+                np.sqrt(
+                    mean_squared_error(
+                        tune_valid[target_col].to_numpy(dtype=float),
+                        predictions,
+                    )
+                )
+            )
+            if score < best_score:
+                best_score = score
+                best_pipeline = candidate
+        selected[family] = best_pipeline
+    if include_optional_models:
+        optional = build_model_pipelines(
+            random_state=random_state,
+            include_optional_models=True,
+        )
+        for name, pipeline in optional.items():
+            selected.setdefault(name, pipeline)
+    return selected
+
+
 def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFrame, pd.DataFrame, str, dict[str, Any]]:
     unique_years = sorted(pd.unique(df["year"].astype(int)).tolist())
     unique_counties = sorted(pd.unique(df["county_id"].astype(str)).tolist())
@@ -578,6 +786,73 @@ def compute_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100.0)
 
 
+def regression_metric_row(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    model: str,
+    model_type: str,
+    n_train: int,
+    n_test: int,
+    feature_group: str = "all",
+) -> dict[str, Any]:
+    return {
+        "model": model,
+        "model_type": model_type,
+        "feature_group": feature_group,
+        "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "r2": float(r2_score(y_true, y_pred)) if len(y_true) >= 2 else float("nan"),
+        "mape": compute_mape(y_true, y_pred),
+        "n_train": n_train,
+        "n_test": n_test,
+    }
+
+
+def evaluate_naive_baselines(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    target_col: str,
+    *,
+    feature_group: str = "all",
+) -> pd.DataFrame:
+    y_train = train_df[target_col].to_numpy(dtype=float)
+    y_test = test_df[target_col].to_numpy(dtype=float)
+    train_mean = float(np.nanmean(y_train))
+    rows = [
+        regression_metric_row(
+            y_test,
+            np.full(shape=len(test_df), fill_value=train_mean, dtype=float),
+            model="BaselineTrainMean",
+            model_type="baseline",
+            feature_group=feature_group,
+            n_train=len(train_df),
+            n_test=len(test_df),
+        )
+    ]
+
+    lookup = {
+        (str(row.county_id), int(row.year)): float(getattr(row, target_col))
+        for row in train_df[["county_id", "year", target_col]].itertuples(index=False)
+    }
+    previous_year_predictions = [
+        lookup.get((str(row.county_id), int(row.year) - 1), train_mean)
+        for row in test_df[["county_id", "year"]].itertuples(index=False)
+    ]
+    rows.append(
+        regression_metric_row(
+            y_test,
+            np.asarray(previous_year_predictions, dtype=float),
+            model="BaselinePreviousYearSameCounty",
+            model_type="baseline",
+            feature_group=feature_group,
+            n_train=len(train_df),
+            n_test=len(test_df),
+        )
+    )
+    return pd.DataFrame(rows)
+
+
 def evaluate_models(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -585,6 +860,9 @@ def evaluate_models(
     target_col: str,
     *,
     include_optional_models: bool = False,
+    random_state: int = 42,
+    tune_hyperparameters: bool = True,
+    feature_group: str = "all",
 ) -> tuple[pd.DataFrame, dict[str, Pipeline]]:
     X_train = train_df[feature_cols]
     y_train = train_df[target_col].to_numpy(dtype=float)
@@ -595,26 +873,27 @@ def evaluate_models(
     fitted_models: dict[str, Pipeline] = {}
     warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
-    for name, pipe in build_model_pipelines(
+    for name, pipe in select_model_pipelines(
+        train_df,
+        feature_cols,
+        target_col,
+        random_state=random_state,
         include_optional_models=include_optional_models,
+        tune_hyperparameters=tune_hyperparameters,
     ).items():
         try:
             pipe.fit(X_train, y_train)
             predictions = pipe.predict(X_test)
-            rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
-            mae = float(mean_absolute_error(y_test, predictions))
-            r2 = float(r2_score(y_test, predictions)) if len(y_test) >= 2 else float("nan")
-            mape = compute_mape(y_test, predictions)
             results.append(
-                {
-                    "model": name,
-                    "rmse": rmse,
-                    "mae": mae,
-                    "r2": r2,
-                    "mape": mape,
-                    "n_train": len(train_df),
-                    "n_test": len(test_df),
-                }
+                regression_metric_row(
+                    y_test,
+                    predictions,
+                    model=name,
+                    model_type="ml",
+                    feature_group=feature_group,
+                    n_train=len(train_df),
+                    n_test=len(test_df),
+                )
             )
             fitted_models[name] = pipe
         except Exception as exc:  # pragma: no cover - model-specific failures
@@ -625,6 +904,103 @@ def evaluate_models(
 
     result_frame = pd.DataFrame(results).sort_values(["rmse", "mae", "model"]).reset_index(drop=True)
     return result_frame, fitted_models
+
+
+def evaluate_feature_group_benchmarks(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    *,
+    random_state: int = 42,
+    include_optional_models: bool = False,
+    tune_hyperparameters: bool = True,
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    for group_name in FEATURE_GROUP_BENCHMARKS:
+        group_cols = annualized_columns_for_group(feature_cols, group_name)
+        if not group_cols:
+            continue
+        group_results, _ = evaluate_models(
+            train_df,
+            test_df,
+            group_cols,
+            target_col,
+            include_optional_models=include_optional_models,
+            random_state=random_state,
+            tune_hyperparameters=tune_hyperparameters,
+            feature_group=group_name,
+        )
+        rows.append(group_results)
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True).sort_values(
+        ["feature_group", "rmse", "mae", "model"]
+    ).reset_index(drop=True)
+
+
+def evaluate_year_cv(
+    frame: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    *,
+    random_state: int = 42,
+    include_optional_models: bool = False,
+    tune_hyperparameters: bool = True,
+    feature_group: str = "all",
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    years = sorted(pd.to_numeric(frame["year"], errors="coerce").dropna().astype(int).unique())
+    for test_year in years:
+        train_df = frame[frame["year"].astype(int) != test_year].copy()
+        test_df = frame[frame["year"].astype(int) == test_year].copy()
+        if train_df.empty or test_df.empty:
+            continue
+        model_results, _ = evaluate_models(
+            train_df,
+            test_df,
+            feature_cols,
+            target_col,
+            include_optional_models=include_optional_models,
+            random_state=random_state,
+            tune_hyperparameters=tune_hyperparameters,
+            feature_group=feature_group,
+        )
+        baseline_results = evaluate_naive_baselines(
+            train_df,
+            test_df,
+            target_col,
+            feature_group=feature_group,
+        )
+        fold = pd.concat([model_results, baseline_results], ignore_index=True)
+        fold.insert(0, "fold_test_year", test_year)
+        rows.append(fold)
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True).sort_values(
+        ["fold_test_year", "model_type", "rmse", "mae", "model"]
+    ).reset_index(drop=True)
+
+
+def build_residual_frame(
+    model: Pipeline,
+    test_df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+) -> pd.DataFrame:
+    predictions = model.predict(test_df[feature_cols])
+    residuals = test_df[["county_id", "year", target_col]].copy()
+    if "crop_type" in test_df.columns:
+        residuals.insert(1, "crop_type", test_df["crop_type"].to_numpy())
+    residuals["prediction"] = predictions
+    residuals["residual"] = residuals[target_col] - residuals["prediction"]
+    residuals["abs_error"] = residuals["residual"].abs()
+    residuals["ape"] = np.where(
+        residuals[target_col].ne(0),
+        residuals["abs_error"] / residuals[target_col].abs() * 100.0,
+        np.nan,
+    )
+    return residuals.sort_values(["year", "county_id"]).reset_index(drop=True)
 
 
 def get_feature_importance(
@@ -862,20 +1238,36 @@ def run_yield_regression(
         output_dir = default_output_dir(root, merged, crop_type)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    feature_cols_before_pruning = list(feature_cols)
+    feature_cols, pruning_report = prune_feature_columns(merged, feature_cols)
+    pruning_report_path = save_json(
+        pruning_report,
+        output_dir / "feature_pruning_report.json",
+    )
+
     train_df, test_df, split_mode, split_metadata = split_dataset(merged, random_state=random_state)
-    results, fitted_models = evaluate_models(
+    ml_results, fitted_models = evaluate_models(
         train_df,
         test_df,
         feature_cols,
         "yield_bu_acre",
         include_optional_models=include_optional_models,
-    )
-    best_model_name = results.iloc[0]["model"]
-
-    final_model = build_model_pipelines(
         random_state=random_state,
-        include_optional_models=include_optional_models,
-    )[best_model_name]
+        tune_hyperparameters=True,
+        feature_group=feature_group,
+    )
+    baseline_results = evaluate_naive_baselines(
+        train_df,
+        test_df,
+        "yield_bu_acre",
+        feature_group=feature_group,
+    )
+    results = pd.concat([ml_results, baseline_results], ignore_index=True).sort_values(
+        ["model_type", "rmse", "mae", "model"]
+    ).reset_index(drop=True)
+    best_model_name = ml_results.iloc[0]["model"]
+
+    final_model = fitted_models[best_model_name]
     final_model.fit(merged[feature_cols], merged["yield_bu_acre"].to_numpy(dtype=float))
 
     importance = get_feature_importance(
@@ -894,6 +1286,34 @@ def run_yield_regression(
     results_path = output_dir / "yield_model_benchmark.csv"
     results.to_csv(results_path, index=False)
 
+    feature_group_benchmark = evaluate_feature_group_benchmarks(
+        train_df,
+        test_df,
+        feature_cols,
+        "yield_bu_acre",
+        random_state=random_state,
+        include_optional_models=include_optional_models,
+        tune_hyperparameters=True,
+    )
+    feature_group_benchmark_path = output_dir / "feature_group_benchmark.csv"
+    feature_group_benchmark.to_csv(feature_group_benchmark_path, index=False)
+
+    year_cv_benchmark = evaluate_year_cv(
+        merged,
+        feature_cols,
+        "yield_bu_acre",
+        random_state=random_state,
+        include_optional_models=include_optional_models,
+        tune_hyperparameters=True,
+        feature_group=feature_group,
+    )
+    year_cv_benchmark_path = output_dir / "year_cv_benchmark.csv"
+    year_cv_benchmark.to_csv(year_cv_benchmark_path, index=False)
+
+    residuals = build_residual_frame(final_model, test_df, feature_cols, "yield_bu_acre")
+    residuals_path = output_dir / "prediction_residuals.csv"
+    residuals.to_csv(residuals_path, index=False)
+
     training_frame_path = output_dir / "merged_annual_training_frame.csv"
     merged.to_csv(training_frame_path, index=False)
 
@@ -907,6 +1327,7 @@ def run_yield_regression(
         "crop_type": crop_type or "mixed",
         "feature_group": feature_group,
         "feature_columns": feature_cols,
+        "feature_columns_before_pruning": feature_cols_before_pruning,
         "target_column": "yield_bu_acre",
         "target_units": target_units,
         "split_mode": split_mode,
@@ -921,11 +1342,16 @@ def run_yield_regression(
         "best_model_name": best_model_name,
         "models_benchmarked": results["model"].tolist(),
         "random_state": random_state,
+        "pruning": pruning_report,
         "uses_forecast_generated_features": False,
         "results_csv": results_path,
         "training_frame_csv": training_frame_path,
         "feature_importance_csv": importance_csv_path,
         "feature_importance_png": importance_path,
+        "feature_group_benchmark_csv": feature_group_benchmark_path,
+        "year_cv_benchmark_csv": year_cv_benchmark_path,
+        "feature_pruning_report_json": pruning_report_path,
+        "prediction_residuals_csv": residuals_path,
         "model_path": model_path,
     }
     metadata_path = save_json(metadata, output_dir / "yield_model_metadata.json")
@@ -940,11 +1366,17 @@ def run_yield_regression(
         f"rows={len(merged)}",
         f"train_rows={len(train_df)}",
         f"test_rows={len(test_df)}",
+        f"feature_count_before_pruning={len(feature_cols_before_pruning)}",
+        f"feature_count_after_pruning={len(feature_cols)}",
         f"county_overlap={summary['county_overlap']}",
         f"year_overlap={summary['year_overlap']}",
         f"county_year_overlap={summary['county_year_overlap']}",
         f"best_model={best_model_name}",
         f"results_csv={results_path}",
+        f"feature_group_benchmark_csv={feature_group_benchmark_path}",
+        f"year_cv_benchmark_csv={year_cv_benchmark_path}",
+        f"feature_pruning_report_json={pruning_report_path}",
+        f"prediction_residuals_csv={residuals_path}",
         f"training_frame_csv={training_frame_path}",
         f"model_path={model_path}",
         f"metadata_json={metadata_path}",
@@ -961,6 +1393,8 @@ def run_yield_regression(
     print(f"Saved model: {model_path}")
     print(f"Metadata: {metadata_path}")
     print(f"Feature importance plot: {importance_path}")
+    print(f"Feature group benchmark: {feature_group_benchmark_path}")
+    print(f"Year CV benchmark: {year_cv_benchmark_path}")
 
     return RegressionArtifacts(
         results=results,
@@ -979,6 +1413,10 @@ def run_yield_regression(
         metadata_path=metadata_path,
         importance_path=importance_path,
         summary_path=summary_path,
+        feature_group_benchmark_path=feature_group_benchmark_path,
+        year_cv_benchmark_path=year_cv_benchmark_path,
+        pruning_report_path=pruning_report_path,
+        residuals_path=residuals_path,
     )
 
 

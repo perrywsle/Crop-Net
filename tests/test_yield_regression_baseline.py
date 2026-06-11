@@ -18,6 +18,7 @@ from cropnet_forecasting.yield_regression import (
     aggregate_growing_season_features,
     build_model_pipelines,
     flatten_usda_path_groups,
+    prune_feature_columns,
     read_monthly_features,
     run_yield_regression,
 )
@@ -133,6 +134,29 @@ def test_annualization_adds_mean_slope_delta_and_amplitude() -> None:
     assert row["ag_green_pixel_ratio_amplitude"] == pytest.approx(5.0)
 
 
+def test_feature_pruning_is_deterministic() -> None:
+    frame = pd.DataFrame(
+        {
+            "keep": [1.0, 2.0, 3.0, 4.0],
+            "duplicate": [1.0, 2.0, 3.0, 4.0],
+            "constant": [5.0, 5.0, 5.0, 5.0],
+            "sparse": [1.0, None, None, None],
+        }
+    )
+
+    kept, report = prune_feature_columns(
+        frame,
+        ["keep", "duplicate", "constant", "sparse"],
+        max_missing_fraction=0.25,
+        correlation_threshold=0.99,
+    )
+
+    assert kept == ["keep"]
+    assert report["dropped_sparse"] == ["sparse"]
+    assert report["dropped_zero_variance"] == ["constant"]
+    assert report["dropped_correlated"][0]["dropped"] == "duplicate"
+
+
 def test_read_monthly_features_rejects_forecast_generated_columns(tmp_path: Path) -> None:
     """Direct yield training must not accept blank-fill or forecasting outputs."""
     path = tmp_path / "blank_fill_predictions.csv"
@@ -178,11 +202,17 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     assert artifacts.results_path.exists()
     assert artifacts.model_path.exists()
     assert artifacts.metadata_path.exists()
+    assert artifacts.feature_group_benchmark_path.exists()
+    assert artifacts.year_cv_benchmark_path.exists()
+    assert artifacts.pruning_report_path.exists()
+    assert artifacts.residuals_path.exists()
     assert artifacts.best_model_name == "Ridge"
 
     model = joblib.load(artifacts.model_path)
     metadata = json.loads(artifacts.metadata_path.read_text(encoding="utf-8"))
     training_frame = pd.read_csv(artifacts.training_frame_path)
+    benchmark = pd.read_csv(artifacts.results_path)
+    residuals = pd.read_csv(artifacts.residuals_path)
 
     assert hasattr(model, "predict")
     assert metadata["uses_forecast_generated_features"] is False
@@ -190,5 +220,11 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     assert metadata["split_mode"] == "year_split (test_year=2022)"
     assert metadata["split_strategy"] == "year_split"
     assert metadata["test_year"] == 2022
+    assert "pruning" in metadata
+    assert {
+        "BaselineTrainMean",
+        "BaselinePreviousYearSameCounty",
+    }.issubset(set(benchmark["model"]))
+    assert {"prediction", "residual", "abs_error", "ape"}.issubset(residuals.columns)
     assert "forecast_step" not in training_frame.columns
     assert {"yield_bu_acre", "ag_green_pixel_ratio_slope"}.issubset(training_frame.columns)

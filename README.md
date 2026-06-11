@@ -74,7 +74,25 @@ Fetch USDA labels without downloading imagery or weather chunks:
 python fetch_data.py --labels-only --crop corn --years 2017 2018 2019 2020 2021 2022 --output-dir data/usda_labels
 ```
 
-Extract real monthly AG, NDVI, and weather features without training forecasting models:
+Create a label-driven county batch manifest and extraction commands for the
+growing-season run:
+```bash
+python src/cropnet_forecasting/yield_batching.py manifest \
+  --usda-path "data/usda_labels/USDA Crop Dataset/Corn/2017/USDA_Corn_County_2017.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2018/USDA_Corn_County_2018.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2019/USDA_Corn_County_2019.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2020/USDA_Corn_County_2020.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2022/USDA_Corn_County_2022.csv" \
+  --batch-size 10 \
+  --years 2017 2018 2019 2020 2021 2022 \
+  --quarters Q2 Q3 \
+  --output-path outputs/experiments/corn_ia_gs_2017_2022/batch_manifest.csv \
+  --write-commands outputs/experiments/corn_ia_gs_2017_2022/batch_commands.txt
+```
+
+Run each generated command to extract real monthly AG, NDVI, and weather
+features without training forecasting models. Each command follows this shape:
 ```bash
 python scripts/research/cropnet_feature_forecasting_v12_server.py \
   --full-run \
@@ -82,16 +100,25 @@ python scripts/research/cropnet_feature_forecasting_v12_server.py \
   --state-codes IA \
   --crop Corn \
   --years 2017 2018 2019 2020 2021 2022 \
-  --max-counties 9999 \
-  --run-name corn_ia_ground_truth_features \
+  --quarters Q2 Q3 \
+  --fips-codes 19001 19003 19005 19007 19009 \
+  --run-name corn_ia_gs_2017_2022_batch_001 \
   --resume \
   --delete-raw-after-extract
 ```
 
+Merge completed batch monthly tables into one canonical full-IA table:
+```bash
+python src/cropnet_forecasting/yield_batching.py merge \
+  --monthly-path outputs/experiments/corn_ia_gs_2017_2022_batch_*/artifacts/official_monthly_feature_table.parquet \
+  --output-path outputs/experiments/corn_ia_gs_2017_2022/artifacts/official_monthly_feature_table.parquet \
+  --diagnostic-path outputs/experiments/corn_ia_gs_2017_2022/artifacts/monthly_merge_diagnostic.json
+```
+
 Train/test the direct yield baseline from ground-truth monthly features and USDA labels:
 ```bash
-python -m cropnet_forecasting.yield_regression \
-  --monthly-path outputs/experiments/corn_ia_ground_truth_features/artifacts/official_monthly_feature_table.parquet \
+python src/cropnet_forecasting/yield_regression.py \
+  --monthly-path outputs/experiments/corn_ia_gs_2017_2022/artifacts/official_monthly_feature_table.parquet \
   --usda-path "data/usda_labels/USDA Crop Dataset/Corn/2017/USDA_Corn_County_2017.csv" \
     "data/usda_labels/USDA Crop Dataset/Corn/2018/USDA_Corn_County_2018.csv" \
     "data/usda_labels/USDA Crop Dataset/Corn/2019/USDA_Corn_County_2019.csv" \
@@ -100,10 +127,10 @@ python -m cropnet_forecasting.yield_regression \
     "data/usda_labels/USDA Crop Dataset/Corn/2022/USDA_Corn_County_2022.csv" \
   --crop-type corn \
   --feature-group all \
-  --output-dir outputs/yield_baseline/corn_ia_2017_2022
+  --output-dir outputs/yield_baseline/corn_ia_2017_2022_gs
 ```
 
-The direct yield baseline rejects blank-fill or forecast prediction tables and saves a merged annual training frame, benchmark CSV, best model artifact, and metadata JSON.
+The direct yield baseline rejects blank-fill or forecast prediction tables and saves a merged annual training frame, model benchmark, feature-group benchmark, leave-one-year-out benchmark, pruning report, residuals, best model artifact, and metadata JSON.
 
 ### Convert GUI sample data
 ```bash
