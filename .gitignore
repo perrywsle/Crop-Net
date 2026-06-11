@@ -43,6 +43,7 @@ id_ed25519
 
 # repo-local generated data
 /tutorial
+/Crop-Net/
 
 # allow small staged handover artifacts
 !reports/
