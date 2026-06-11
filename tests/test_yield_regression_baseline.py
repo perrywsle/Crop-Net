@@ -188,5 +188,7 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     assert metadata["uses_forecast_generated_features"] is False
     assert metadata["target_units"] == ["BU / ACRE"]
     assert metadata["split_mode"] == "year_split (test_year=2022)"
+    assert metadata["split_strategy"] == "year_split"
+    assert metadata["test_year"] == 2022
     assert "forecast_step" not in training_frame.columns
     assert {"yield_bu_acre", "ag_green_pixel_ratio_slope"}.issubset(training_frame.columns)

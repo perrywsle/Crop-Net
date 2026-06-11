@@ -533,7 +533,7 @@ def build_model_pipelines(
     return models
 
 
-def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFrame, pd.DataFrame, str, dict[str, Any]]:
     unique_years = sorted(pd.unique(df["year"].astype(int)).tolist())
     unique_counties = sorted(pd.unique(df["county_id"].astype(str)).tolist())
 
@@ -542,7 +542,10 @@ def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFram
         train = df[df["year"].astype(int) < test_year].copy()
         test = df[df["year"].astype(int) == test_year].copy()
         if not train.empty and not test.empty:
-            return train, test, f"year_split (test_year={test_year})"
+            return train, test, f"year_split (test_year={test_year})", {
+                "strategy": "year_split",
+                "test_year": test_year,
+            }
 
     if len(unique_counties) >= 2:
         splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=random_state)
@@ -550,7 +553,10 @@ def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFram
         train = df.iloc[train_idx].copy()
         test = df.iloc[test_idx].copy()
         if not train.empty and not test.empty:
-            return train, test, "county_split"
+            return train, test, "county_split", {
+                "strategy": "county_split",
+                "test_year": None,
+            }
 
     if len(df) < 4:
         raise ValueError(
@@ -559,7 +565,10 @@ def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFram
         )
 
     train, test = train_test_split(df, test_size=0.2, random_state=random_state)
-    return train.copy(), test.copy(), "row_split_fallback"
+    return train.copy(), test.copy(), "row_split_fallback", {
+        "strategy": "row_split_fallback",
+        "test_year": None,
+    }
 
 
 def compute_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -853,7 +862,7 @@ def run_yield_regression(
         output_dir = default_output_dir(root, merged, crop_type)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_df, test_df, split_mode = split_dataset(merged, random_state=random_state)
+    train_df, test_df, split_mode, split_metadata = split_dataset(merged, random_state=random_state)
     results, fitted_models = evaluate_models(
         train_df,
         test_df,
@@ -901,6 +910,8 @@ def run_yield_regression(
         "target_column": "yield_bu_acre",
         "target_units": target_units,
         "split_mode": split_mode,
+        "split_strategy": split_metadata["strategy"],
+        "test_year": split_metadata["test_year"],
         "rows": len(merged),
         "train_rows": len(train_df),
         "test_rows": len(test_df),
