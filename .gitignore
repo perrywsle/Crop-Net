@@ -10,6 +10,7 @@ __pycache__/
 # datasets and caches
 raw_chunks/
 feature_cache/
+data/usda_labels/
 .cache/
 huggingface/
 *.h5

@@ -118,35 +118,39 @@ EXTRACTORS = {}
 LOGGER = logging.getLogger("cropnet_v12")
 
 
-def load_runtime_imports() -> None:
+def load_runtime_imports(require_forecasting: bool = True) -> None:
     global h5py, np, pd, pyarrow, sm, torch, nn, HfApi, hf_hub_download
     global mean_absolute_error, mean_squared_error, DataLoader, TensorDataset, tqdm
     import h5py as _h5py
     import numpy as _np
     import pandas as _pd
     import pyarrow as _pyarrow  # noqa: F401
-    import statsmodels.api as _sm
-    import torch as _torch
-    import torch.nn as _nn
     from huggingface_hub import HfApi as _HfApi, hf_hub_download as _hf_hub_download
-    from sklearn.metrics import mean_absolute_error as _mae, mean_squared_error as _mse
-    from torch.utils.data import DataLoader as _DataLoader, TensorDataset as _TensorDataset
     from tqdm.auto import tqdm as _tqdm
 
     h5py = _h5py
     np = _np
     pd = _pd
     pyarrow = _pyarrow
+    HfApi = _HfApi
+    hf_hub_download = _hf_hub_download
+    tqdm = _tqdm
+    if not require_forecasting:
+        return
+
+    import statsmodels.api as _sm
+    import torch as _torch
+    import torch.nn as _nn
+    from sklearn.metrics import mean_absolute_error as _mae, mean_squared_error as _mse
+    from torch.utils.data import DataLoader as _DataLoader, TensorDataset as _TensorDataset
+
     sm = _sm
     torch = _torch
     nn = _nn
-    HfApi = _HfApi
-    hf_hub_download = _hf_hub_download
     mean_absolute_error = _mae
     mean_squared_error = _mse
     DataLoader = _DataLoader
     TensorDataset = _TensorDataset
-    tqdm = _tqdm
 
 
 def parse_args() -> argparse.Namespace:
@@ -176,6 +180,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-dir", default=None, help="Optional local Crop-Net repo path.")
     parser.add_argument("--resume", action="store_true", help="Reuse existing validated chunk outputs.")
     parser.add_argument("--delete-raw-after-extract", action="store_true", help="Delete downloaded raw chunks after extraction.")
+    parser.add_argument(
+        "--extract-only",
+        action="store_true",
+        help="Stop after validated monthly feature extraction; skip sequence building, forecasting, and blank-fill evaluation.",
+    )
     parser.add_argument("--max-auto-counties", "--max-counties", dest="max_auto_counties", type=int, default=10)
     parser.add_argument("--lookback-months", "--seq-len", dest="lookback_months", type=int, default=6)
     parser.add_argument("--forecast-horizon", type=int, default=1)
@@ -302,6 +311,7 @@ class RuntimeConfig:
     models: list[str]
     delete_raw_after_extract: bool
     resume: bool
+    extract_only: bool
     dry_run: bool
     full_run: bool
     eval_only: bool
@@ -440,6 +450,8 @@ def build_config(args: argparse.Namespace) -> RuntimeConfig:
     if args.test_years is None and existing_hints.get("test_years"):
         args.test_years = existing_hints.get("test_years")
     train_years, val_years, test_years, run_forecasting = resolve_year_splits(args)
+    if args.extract_only and args.run_blank_fill_eval:
+        raise ValueError("--extract-only cannot be combined with --run-blank-fill-eval.")
 
     dry_run_max = {
         "dry_run_max_crops": 1,
@@ -494,6 +506,7 @@ def build_config(args: argparse.Namespace) -> RuntimeConfig:
         models=list(dict.fromkeys(args.models + (["classical_ssm"] if args.run_classical_ssm else []))),
         delete_raw_after_extract=args.delete_raw_after_extract,
         resume=args.resume,
+        extract_only=args.extract_only,
         dry_run=args.dry_run,
         full_run=args.full_run,
         eval_only=args.eval_only,
@@ -3211,6 +3224,13 @@ def run_pipeline(cfg: RuntimeConfig) -> None:
         available_features,
     )
 
+    if cfg.extract_only:
+        LOGGER.info(
+            "Extraction-only mode completed after monthly table validation; "
+            "skipping sequence building, forecasting models, and blank-fill evaluation."
+        )
+        return
+
     filled_unscaled = None
     filled_scaled = None
     mu = None
@@ -3510,11 +3530,12 @@ def main() -> None:
             ensure_package("numpy", "numpy")
             ensure_package("pandas", "pandas")
             ensure_package("pyarrow", "pyarrow>=15")
-            ensure_package("statsmodels", "statsmodels>=0.14")
-            ensure_package("sklearn", "scikit-learn")
-            ensure_package("torch", "torch")
             ensure_package("tqdm", "tqdm>=4.66")
-            load_runtime_imports()
+            if not cfg.extract_only:
+                ensure_package("statsmodels", "statsmodels>=0.14")
+                ensure_package("sklearn", "scikit-learn")
+                ensure_package("torch", "torch")
+            load_runtime_imports(require_forecasting=not cfg.extract_only)
             print_environment(cfg)
         if cfg.eval_only:
             run_eval_only(cfg)

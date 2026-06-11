@@ -68,6 +68,43 @@ The app scans the directory recursively, extracts monthly features, and shows a 
 python fetch_data.py --county-id 01003 --crop corn --years 2017 2018 2019 2020 2021 2022
 ```
 
+### Direct Corn IA yield baseline
+Fetch USDA labels without downloading imagery or weather chunks:
+```bash
+python fetch_data.py --labels-only --crop corn --years 2017 2018 2019 2020 2021 2022 --output-dir data/usda_labels
+```
+
+Extract real monthly AG, NDVI, and weather features without training forecasting models:
+```bash
+python scripts/research/cropnet_feature_forecasting_v12_server.py \
+  --full-run \
+  --extract-only \
+  --state-codes IA \
+  --crop Corn \
+  --years 2017 2018 2019 2020 2021 2022 \
+  --max-counties 9999 \
+  --run-name corn_ia_ground_truth_features \
+  --resume \
+  --delete-raw-after-extract
+```
+
+Train/test the direct yield baseline from ground-truth monthly features and USDA labels:
+```bash
+python -m cropnet_forecasting.yield_regression \
+  --monthly-path outputs/experiments/corn_ia_ground_truth_features/artifacts/official_monthly_feature_table.parquet \
+  --usda-path "data/usda_labels/USDA Crop Dataset/Corn/2017/USDA_Corn_County_2017.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2018/USDA_Corn_County_2018.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2019/USDA_Corn_County_2019.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2020/USDA_Corn_County_2020.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv" \
+    "data/usda_labels/USDA Crop Dataset/Corn/2022/USDA_Corn_County_2022.csv" \
+  --crop-type corn \
+  --feature-group all \
+  --output-dir outputs/yield_baseline/corn_ia_2017_2022
+```
+
+The direct yield baseline rejects blank-fill or forecast prediction tables and saves a merged annual training frame, benchmark CSV, best model artifact, and metadata JSON.
+
 ### Convert GUI sample data
 ```bash
 python convert_data.py --source data/sample_data --output test_data

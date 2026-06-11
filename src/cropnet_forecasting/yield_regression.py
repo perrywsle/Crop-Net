@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import warnings
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import joblib
 import matplotlib
 
 matplotlib.use("Agg")
@@ -55,13 +57,30 @@ else:  # pragma: no cover - exercised when run as a module
 
 GROWING_SEASON_MONTHS = (4, 5, 6, 7, 8, 9)
 DEFAULT_MIN_OVERLAP_ROWS = 12
-DEFAULT_OUTPUT_SUBDIR = "yield_regression"
+DEFAULT_OUTPUT_SUBDIR = "yield_baseline"
+TARGET_COLUMNS = {"yield_bu_acre", "target_unit"}
+GENERATED_FORECAST_COLUMNS = {
+    "forecast_step",
+    "known_months",
+    "source_note",
+    "y_pred",
+}
 YIELD_COLUMN_CANDIDATES = (
     "YIELD, MEASURED IN BU / ACRE",
     "yield_bu_acre",
     "yield",
     "target_value",
 )
+_YIELD_UNIT_BY_CROP: dict[str, str] = {
+    "corn": "BU / ACRE",
+    "soybean": "BU / ACRE",
+    "soybeans": "BU / ACRE",
+    "winter wheat": "BU / ACRE",
+    "cotton": "LB / ACRE",
+}
+_STATE_ABBR_BY_FIPS_PREFIX: dict[str, str] = {
+    "19": "ia",
+}
 
 
 @dataclass(frozen=True)
@@ -76,7 +95,25 @@ class RegressionArtifacts:
     best_model_name: str
     fitted_model: Pipeline
     output_dir: Path
+    results_path: Path
+    training_frame_path: Path
+    model_path: Path
+    metadata_path: Path
     importance_path: Path
+    summary_path: Path
+
+
+def _json_default(value: Any) -> Any:
+    """Serialize common numpy/pandas/path values into JSON primitives."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if pd.isna(value):
+        return None
+    return str(value)
 
 
 def normalize_county_id(values: pd.Series) -> pd.Series:
@@ -119,8 +156,38 @@ def detect_yield_column(columns: list[str]) -> str:
     )
 
 
+def infer_target_unit(yield_column: str, crop_type: str | None) -> str:
+    """Infer the unit used by the selected USDA yield column."""
+    lowered = yield_column.lower()
+    if "bu / acre" in lowered or "bu/acre" in lowered:
+        return "BU / ACRE"
+    if "lb / acre" in lowered or "lb/acre" in lowered:
+        return "LB / ACRE"
+    if crop_type is not None:
+        return _YIELD_UNIT_BY_CROP.get(normalize_crop_type(crop_type) or "", "unknown")
+    return "unknown"
+
+
+def validate_ground_truth_monthly_features(frame: pd.DataFrame, source_path: Path) -> None:
+    """Reject forecast or blank-fill outputs masquerading as monthly features."""
+    generated_columns = sorted(GENERATED_FORECAST_COLUMNS.intersection(frame.columns))
+    if generated_columns:
+        raise ValueError(
+            "Monthly feature table appears to contain generated forecast columns "
+            f"{generated_columns}. Use the ground-truth official_monthly_feature_table "
+            "from extraction-only preprocessing instead."
+        )
+    lowered_path = str(source_path).lower()
+    if "blank_fill" in lowered_path or "forecast" in lowered_path:
+        raise ValueError(
+            "Monthly feature table path looks like a forecast/blank-fill artifact. "
+            "Use the extraction artifact official_monthly_feature_table.parquet."
+        )
+
+
 def read_monthly_features(path: Path) -> pd.DataFrame:
     frame = read_table(path)
+    validate_ground_truth_monthly_features(frame, path)
     required = {"county_id", "year", "month"}
     missing = sorted(required.difference(frame.columns))
     if missing:
@@ -228,7 +295,8 @@ def load_usda_yield_table(path: Path, crop_type: str | None = None) -> pd.DataFr
     )
     out["yield_bu_acre"] = pd.to_numeric(out[yield_col], errors="coerce")
     out["crop_type"] = normalize_crop_type(crop_type or infer_crop_type_from_path(path))
-    keep_cols = ["county_id", "year", "yield_bu_acre"]
+    out["target_unit"] = infer_target_unit(yield_col, out["crop_type"].dropna().iloc[0] if out["crop_type"].notna().any() else crop_type)
+    keep_cols = ["county_id", "year", "yield_bu_acre", "target_unit"]
     if out["crop_type"].notna().any():
         keep_cols.append("crop_type")
     out = out[keep_cols].dropna(subset=["county_id", "year", "yield_bu_acre"]).reset_index(drop=True)
@@ -336,7 +404,8 @@ def build_training_frame(
     feature_cols = [
         col
         for col in merged.columns
-        if col not in set(META_COLS + ["yield_bu_acre"])
+        if col not in set(META_COLS).union(TARGET_COLUMNS)
+        and pd.api.types.is_numeric_dtype(merged[col])
     ]
     if not feature_cols:
         raise ValueError("The merged dataset does not contain any model feature columns.")
@@ -384,7 +453,11 @@ def suggest_fips_codes(
     return suggestion[:limit]
 
 
-def build_model_pipelines(random_state: int = 42) -> dict[str, Pipeline]:
+def build_model_pipelines(
+    random_state: int = 42,
+    *,
+    include_optional_models: bool = False,
+) -> dict[str, Pipeline]:
     base_steps = [
         ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler()),
@@ -418,7 +491,7 @@ def build_model_pipelines(random_state: int = 42) -> dict[str, Pipeline]:
             ]
         ),
     }
-    if _HAS_XGBOOST:
+    if include_optional_models and _HAS_XGBOOST:
         models["XGBoost"] = Pipeline(
             base_steps
             + [
@@ -438,7 +511,7 @@ def build_model_pipelines(random_state: int = 42) -> dict[str, Pipeline]:
                 )
             ]
         )
-    if _HAS_LIGHTGBM:
+    if include_optional_models and _HAS_LIGHTGBM:
         models["LightGBM"] = Pipeline(
             base_steps
             + [
@@ -501,6 +574,8 @@ def evaluate_models(
     test_df: pd.DataFrame,
     feature_cols: list[str],
     target_col: str,
+    *,
+    include_optional_models: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, Pipeline]]:
     X_train = train_df[feature_cols]
     y_train = train_df[target_col].to_numpy(dtype=float)
@@ -511,7 +586,9 @@ def evaluate_models(
     fitted_models: dict[str, Pipeline] = {}
     warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
-    for name, pipe in build_model_pipelines().items():
+    for name, pipe in build_model_pipelines(
+        include_optional_models=include_optional_models,
+    ).items():
         try:
             pipe.fit(X_train, y_train)
             predictions = pipe.predict(X_test)
@@ -629,6 +706,34 @@ def save_feature_importance_plot(
     return output_path
 
 
+def save_json(payload: dict[str, Any], output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2, default=_json_default) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def infer_state_label(county_ids: pd.Series) -> str | None:
+    prefixes = set(county_ids.dropna().astype(str).str.zfill(5).str[:2])
+    if len(prefixes) != 1:
+        return None
+    return _STATE_ABBR_BY_FIPS_PREFIX.get(next(iter(prefixes)))
+
+
+def default_output_dir(root: Path, merged: pd.DataFrame, crop_type: str | None) -> Path:
+    years = sorted(pd.to_numeric(merged["year"], errors="coerce").dropna().astype(int).unique())
+    year_label = f"{years[0]}_{years[-1]}" if years else "unknown_years"
+    crop_label = (normalize_crop_type(crop_type) or "mixed").replace(" ", "_")
+    state_label = infer_state_label(merged["county_id"])
+    parts = [crop_label]
+    if state_label is not None:
+        parts.append(state_label)
+    parts.append(year_label)
+    return root / "outputs" / DEFAULT_OUTPUT_SUBDIR / "_".join(parts)
+
+
 def resolve_monthly_path(root: Path, monthly_path: Path | None) -> Path:
     if monthly_path is not None:
         if monthly_path.exists():
@@ -702,6 +807,7 @@ def run_yield_regression(
     feature_group: str = "all",
     min_overlap_rows: int = DEFAULT_MIN_OVERLAP_ROWS,
     random_state: int = 42,
+    include_optional_models: bool = False,
 ) -> RegressionArtifacts:
     root = Path(__file__).resolve().parents[2]
     resolved_monthly_path = resolve_monthly_path(root, monthly_path)
@@ -744,14 +850,23 @@ def run_yield_regression(
     validate_overlap_or_raise(monthly, usda, overlap_rows, min_overlap_rows)
 
     if output_dir is None:
-        output_dir = root / "outputs" / DEFAULT_OUTPUT_SUBDIR
+        output_dir = default_output_dir(root, merged, crop_type)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     train_df, test_df, split_mode = split_dataset(merged, random_state=random_state)
-    results, fitted_models = evaluate_models(train_df, test_df, feature_cols, "yield_bu_acre")
+    results, fitted_models = evaluate_models(
+        train_df,
+        test_df,
+        feature_cols,
+        "yield_bu_acre",
+        include_optional_models=include_optional_models,
+    )
     best_model_name = results.iloc[0]["model"]
 
-    final_model = build_model_pipelines(random_state=random_state)[best_model_name]
+    final_model = build_model_pipelines(
+        random_state=random_state,
+        include_optional_models=include_optional_models,
+    )[best_model_name]
     final_model.fit(merged[feature_cols], merged["yield_bu_acre"].to_numpy(dtype=float))
 
     importance = get_feature_importance(
@@ -764,15 +879,52 @@ def run_yield_regression(
         importance,
         output_dir / "yield_feature_importance.png",
     )
+    importance_csv_path = output_dir / "yield_feature_importance.csv"
+    importance.to_csv(importance_csv_path, index=False)
 
     results_path = output_dir / "yield_model_benchmark.csv"
     results.to_csv(results_path, index=False)
+
+    training_frame_path = output_dir / "merged_annual_training_frame.csv"
+    merged.to_csv(training_frame_path, index=False)
+
+    model_path = output_dir / "best_yield_model.joblib"
+    joblib.dump(final_model, model_path)
+
+    target_units = sorted(str(value) for value in merged["target_unit"].dropna().unique()) if "target_unit" in merged.columns else []
+    metadata = {
+        "monthly_path": resolved_monthly_path,
+        "usda_paths": resolved_usda_paths,
+        "crop_type": crop_type or "mixed",
+        "feature_group": feature_group,
+        "feature_columns": feature_cols,
+        "target_column": "yield_bu_acre",
+        "target_units": target_units,
+        "split_mode": split_mode,
+        "rows": len(merged),
+        "train_rows": len(train_df),
+        "test_rows": len(test_df),
+        "county_overlap": summary["county_overlap"],
+        "year_overlap": summary["year_overlap"],
+        "county_year_overlap": summary["county_year_overlap"],
+        "best_model_name": best_model_name,
+        "models_benchmarked": results["model"].tolist(),
+        "random_state": random_state,
+        "uses_forecast_generated_features": False,
+        "results_csv": results_path,
+        "training_frame_csv": training_frame_path,
+        "feature_importance_csv": importance_csv_path,
+        "feature_importance_png": importance_path,
+        "model_path": model_path,
+    }
+    metadata_path = save_json(metadata, output_dir / "yield_model_metadata.json")
 
     summary_path = output_dir / "yield_dataset_summary.txt"
     summary_lines = [
         f"monthly_path={resolved_monthly_path}",
         f"usda_paths={', '.join(str(path) for path in resolved_usda_paths)}",
         f"crop_type={crop_type or 'mixed'}",
+        f"feature_group={feature_group}",
         f"split_mode={split_mode}",
         f"rows={len(merged)}",
         f"train_rows={len(train_df)}",
@@ -782,6 +934,9 @@ def run_yield_regression(
         f"county_year_overlap={summary['county_year_overlap']}",
         f"best_model={best_model_name}",
         f"results_csv={results_path}",
+        f"training_frame_csv={training_frame_path}",
+        f"model_path={model_path}",
+        f"metadata_json={metadata_path}",
         f"importance_png={importance_path}",
     ]
     summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
@@ -792,6 +947,8 @@ def run_yield_regression(
     print(f"Split mode: {split_mode}")
     print(results.to_string(index=False))
     print(f"\nBest model: {best_model_name}")
+    print(f"Saved model: {model_path}")
+    print(f"Metadata: {metadata_path}")
     print(f"Feature importance plot: {importance_path}")
 
     return RegressionArtifacts(
@@ -805,7 +962,12 @@ def run_yield_regression(
         best_model_name=best_model_name,
         fitted_model=final_model,
         output_dir=output_dir,
+        results_path=results_path,
+        training_frame_path=training_frame_path,
+        model_path=model_path,
+        metadata_path=metadata_path,
         importance_path=importance_path,
+        summary_path=summary_path,
     )
 
 
@@ -857,6 +1019,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=42,
         help="Random seed for split and model training.",
     )
+    parser.add_argument(
+        "--include-optional-models",
+        action="store_true",
+        help="Also benchmark optional XGBoost/LightGBM models when installed.",
+    )
     return parser
 
 
@@ -873,6 +1040,7 @@ def main(argv: list[str] | None = None) -> int:
             feature_group=args.feature_group,
             min_overlap_rows=args.min_overlap_rows,
             random_state=args.random_state,
+            include_optional_models=args.include_optional_models,
         )
     except Exception as exc:
         print(f"ERROR: {exc}")

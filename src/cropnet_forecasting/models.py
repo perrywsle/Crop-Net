@@ -2,14 +2,28 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
-import torch
-import torch.nn as nn
+try:  # Torch is only required when constructing or loading learned forecasters.
+    import torch
+    import torch.nn as nn
+except ModuleNotFoundError:  # pragma: no cover - depends on local environment
+    torch = types.SimpleNamespace(load=None, device=object)
+    nn = types.SimpleNamespace(Module=object)
+
+
+def _require_torch() -> None:
+    if getattr(torch, "load", None) is None:
+        raise ModuleNotFoundError(
+            "Torch is required for CropNet learned forecasting models. "
+            "Install project requirements before loading checkpoints."
+        )
 
 class LSTMForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0) -> None:
+        _require_torch()
         super().__init__()
         lstm_dropout = dropout if num_layers > 1 else 0.0
         self.lstm = nn.LSTM(input_dim, hidden_size, num_layers=num_layers, batch_first=True, dropout=lstm_dropout)
@@ -21,6 +35,7 @@ class LSTMForecaster(nn.Module):
 
 class GRUForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0) -> None:
+        _require_torch()
         super().__init__()
         gru_dropout = dropout if num_layers > 1 else 0.0
         self.gru = nn.GRU(input_dim, hidden_size, num_layers=num_layers, batch_first=True, dropout=gru_dropout)
@@ -32,6 +47,7 @@ class GRUForecaster(nn.Module):
 
 class TransformerEncoderForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0, max_seq_len: int = 512) -> None:
+        _require_torch()
         super().__init__()
         self.input_proj = nn.Linear(input_dim, hidden_size)
         self.positional = nn.Parameter(torch.zeros(1, max_seq_len, hidden_size))
@@ -116,6 +132,7 @@ class CropNetModelFactory:
 
     @staticmethod
     def load_checkpoint(checkpoint_path: str | Path, model_name: str | None = None, device: str = "cpu", legacy_script_path: str | Path | None = None) -> nn.Module:
+        _require_torch()
         checkpoint_path = Path(checkpoint_path)
         inferred_name = model_name or checkpoint_path.name.replace("_best.pt", "")
         legacy = load_legacy_module(legacy_script_path)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 
 import pandas as pd
 
@@ -13,7 +13,9 @@ from crop_fusion_ai.gui.controller import PreprocessingController, UploadMetadat
 from crop_fusion_ai.preprocessing import aggregate_monthly_feature_frame
 from crop_fusion_ai.preprocessing import combine_modality_feature_frames
 from cropnet_forecasting.data import prepare_monthly_features
-from cropnet_forecasting.predictor import BlankFillPredictor
+
+if TYPE_CHECKING:
+    from cropnet_forecasting.predictor import BlankFillPredictor
 
 ModalityName = Literal["ag", "ndvi", "weather"]
 ProgressCallback = Callable[[str, int, int, str], None]
@@ -233,6 +235,8 @@ def build_forecast_from_directory(
     )
     if progress is not None:
         progress("model_load", 0, 1, "Loading model and scaler")
+    from cropnet_forecasting.predictor import BlankFillPredictor
+
     predictor = BlankFillPredictor.from_artifacts(
         checkpoint_path,
         scaler_path,

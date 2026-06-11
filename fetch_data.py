@@ -1,4 +1,4 @@
-"""Download a small CropNet subset for one county and a 2017-2022 window."""
+"""Download CropNet raw data and/or USDA yield labels."""
 
 from __future__ import annotations
 
@@ -89,8 +89,9 @@ def _parse_years(values: list[int] | None) -> list[int]:
     return [2017, 2018, 2019, 2020, 2021, 2022]
 
 
-def _build_allow_patterns(*, crop: str, years: list[int], state_abbr: str) -> list[str]:
-    crop_folder, crop_file = {
+def _crop_dataset_names(crop: str) -> tuple[str, str]:
+    """Return the CropNet USDA folder and filename crop tokens."""
+    return {
         "corn": ("Corn", "Corn"),
         "cotton": ("Cotton", "Cotton"),
         "soybeans": ("Soybeans", "Soybean"),
@@ -100,10 +101,19 @@ def _build_allow_patterns(*, crop: str, years: list[int], state_abbr: str) -> li
         "winter_wheat": ("WinterWheat", "WinterWheat"),
     }[crop.strip().lower()]
 
-    patterns = [
+
+def build_usda_allow_patterns(*, crop: str, years: list[int]) -> list[str]:
+    """Build Hugging Face allow patterns for USDA county yield labels only."""
+    crop_folder, crop_file = _crop_dataset_names(crop)
+    return [
         f"USDA Crop Dataset/{crop_folder}/{year}/USDA_{crop_file}_County_{year}.csv"
         for year in years
     ]
+
+
+def _build_allow_patterns(*, crop: str, years: list[int], state_abbr: str) -> list[str]:
+    """Build Hugging Face allow patterns for USDA labels plus raw modalities."""
+    patterns = build_usda_allow_patterns(crop=crop, years=years)
     for year in years:
         patterns.append(f"Sentinel-2 Imagery/data/AG/{year}/{state_abbr}/*.h5")
         patterns.append(f"Sentinel-2 Imagery/data/NDVI/{year}/{state_abbr}/*.h5")
@@ -125,18 +135,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR, help="Hugging Face cache directory.")
     parser.add_argument("--keep-cache", action="store_true", help="Keep the temporary cache directory.")
     parser.add_argument("--list-only", action="store_true", help="Print the matched files and exit without downloading.")
+    parser.add_argument(
+        "--labels-only",
+        action="store_true",
+        help="Download only USDA county yield label CSVs. This does not require --county-id.",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    county_id = str(args.county_id).strip().zfill(5)
-    if len(county_id) != 5 or not county_id.isdigit():
-        raise SystemExit("--county-id must be a five-digit FIPS code.")
-
     years = _parse_years(args.years)
-    state_abbr = _get_state_abbr(county_id[:2])
-    allow_patterns = _build_allow_patterns(crop=args.crop, years=years, state_abbr=state_abbr)
+    county_id = str(args.county_id).strip().zfill(5)
+    state_abbr = None
+    if args.labels_only:
+        allow_patterns = build_usda_allow_patterns(crop=args.crop, years=years)
+    else:
+        if len(county_id) != 5 or not county_id.isdigit():
+            raise SystemExit("--county-id must be a five-digit FIPS code.")
+        state_abbr = _get_state_abbr(county_id[:2])
+        allow_patterns = _build_allow_patterns(
+            crop=args.crop,
+            years=years,
+            state_abbr=state_abbr,
+        )
 
     api = HfApi()
     repo_files = api.list_repo_files(args.repo_id, repo_type="dataset")
@@ -148,10 +170,13 @@ def main() -> None:
     for path in matched_files:
         print(f"  {path}")
     print(f"Total matched files: {len(matched_files)}")
-    print(
-        "Note: CropNet stores AG/NDVI as large state-level Sentinel-2 HDF5 files, "
-        "so a single county can still require very large downloads."
-    )
+    if args.labels_only:
+        print("Mode: USDA labels only; AG, NDVI, and weather files are not included.")
+    else:
+        print(
+            "Note: CropNet stores AG/NDVI as large state-level Sentinel-2 HDF5 files, "
+            "so a single county can still require very large downloads."
+        )
 
     if args.list_only:
         return
@@ -204,10 +229,11 @@ def main() -> None:
 
     manifest = {
         "repo_id": args.repo_id,
-        "county_id": county_id,
+        "county_id": None if args.labels_only else county_id,
         "crop": args.crop,
         "years": years,
         "state_abbr": state_abbr,
+        "labels_only": bool(args.labels_only),
         "allow_patterns": allow_patterns,
         "output_dir": str(output_dir),
     }
@@ -216,7 +242,10 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    print(f"Downloaded CropNet subset for county {county_id} into {output_dir}")
+    if args.labels_only:
+        print(f"Downloaded USDA yield labels into {output_dir}")
+    else:
+        print(f"Downloaded CropNet subset for county {county_id} into {output_dir}")
     if args.keep_cache:
         print(f"Cache retained at {cache_dir}")
 
