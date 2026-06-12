@@ -20,6 +20,7 @@ huggingface/
 *.pt
 *.pth
 *.ckpt
+*.joblib
 *.zip
 *.tar
 *.tar.gz

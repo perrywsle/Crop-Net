@@ -160,3 +160,26 @@ The original validated workflow remains in `scripts/research/cropnet_feature_for
 
 ### What not to commit
 Do not commit raw datasets, `raw_chunks/`, `feature_cache/`, HDF5 files, virtual environments, large output directories, or secrets.
+
+## Iowa Corn Monthly Yield Prediction Results
+
+This project trains an Iowa Corn yield prediction model using monthly CropNet AG, NDVI, and weather features joined with USDA county-level annual corn yield labels. The current full experiment uses Iowa Corn data from 2017-2022, trains on 2017-2021, and tests on 2022.
+
+The yield task is built at monthly grain: each `county_id`, `crop_type`, `year`, and `month` row receives the USDA annual yield label for that county-year. This lets the model estimate final annual yield from one month or a month window while still using ground-truth monthly CropNet features only.
+
+Main Colab/result artifacts:
+
+- `outputs/experiments/corn_ia_monthly_2017_2022/artifacts/official_monthly_feature_table.parquet`
+- `outputs/yield_baseline/corn_ia_2017_2022_monthly_full/`
+- `outputs/yield_baseline/corn_ia_2017_2022_monthly_improved/`
+- `metrics.csv`
+- `predictions_2022.csv`
+- `plots/*.png`
+
+For the 2022 holdout set:
+
+- Average actual yield: `195.52`
+- Average predicted yield: `191.74`
+- Average absolute error: `16.33`
+
+The model under-predicts by about `3.78` yield units on average, and the typical prediction error is around `16.33` yield units. The best ML model is useful, but the `BaselinePreviousYearSameCounty` baseline remains slightly stronger on this 2022 test set.

@@ -1,0 +1,20 @@
+{
+  "input_paths": [
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_001/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_002/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_003/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_004/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_005/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_006/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_008/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_009/artifacts/official_monthly_feature_table.parquet",
+    "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_010/artifacts/official_monthly_feature_table.parquet"
+  ],
+  "input_rows": 7128,
+  "output_rows": 7128,
+  "duplicate_rows_removed": 0,
+  "county_count": 99,
+  "year_count": 6,
+  "month_count": 12
+}
