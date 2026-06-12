@@ -167,6 +167,32 @@ This project trains an Iowa Corn yield prediction model using monthly CropNet AG
 
 The yield task is built at monthly grain: each `county_id`, `crop_type`, `year`, and `month` row receives the USDA annual yield label for that county-year. This lets the model estimate final annual yield from one month or a month window while still using ground-truth monthly CropNet features only.
 
+### Prediction Logic
+
+The model does not first aggregate all 12 months into one annual feature row. Instead, it keeps the data at monthly grain and copies the USDA annual yield label onto every monthly row for the same county-year.
+
+Example:
+
+```text
+County 19001, Corn, 2022 annual USDA yield = 164.2 bu/acre
+
+January 2022 features  -> label 164.2
+February 2022 features -> label 164.2
+March 2022 features    -> label 164.2
+...
+December 2022 features -> label 164.2
+```
+
+The model therefore learns this mapping:
+
+```text
+monthly AG + NDVI + weather features + month timing -> final annual corn yield
+```
+
+This design allows early-season or partial-window prediction. For example, the same trained model can be evaluated on January-only rows, Jan-Mar rows, Apr-Jun rows, Apr-Sep rows, or the full year. The split remains year-based, with 2017-2021 used for training and 2022 held out for testing, so duplicated monthly labels from the same county-year do not leak across train and test.
+
+The pipeline also compares ML models against simple baselines. The most important baseline is `BaselinePreviousYearSameCounty`, which predicts a county's 2022 yield from that same county's 2021 yield. This baseline is strong because county yield history already captures soil, management, and local productivity patterns.
+
 Main Colab/result artifacts:
 
 - `outputs/experiments/corn_ia_monthly_2017_2022/artifacts/official_monthly_feature_table.parquet`
