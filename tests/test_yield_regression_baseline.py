@@ -277,6 +277,12 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     assert {"prediction", "residual", "abs_error", "ape"}.issubset(residuals.columns)
     assert sorted(month_benchmark["month"].unique().tolist()) == [4, 5, 6, 7, 8, 9]
     assert "Apr-Sep" in set(window_benchmark["window"])
+    benchmark_best = benchmark[benchmark["model"].eq(artifacts.best_model_name)].iloc[0]
+    window_best = window_benchmark[
+        window_benchmark["window"].eq("Apr-Sep") & window_benchmark["model"].eq(artifacts.best_model_name)
+    ].iloc[0]
+    assert window_best["rmse"] == pytest.approx(benchmark_best["rmse"])
+    assert window_best["mae"] == pytest.approx(benchmark_best["mae"])
     assert "forecast_step" not in training_frame.columns
     assert {"yield_bu_acre", "ag_green_pixel_ratio", "month_sin", "month_cos"}.issubset(training_frame.columns)
     assert "ag_green_pixel_ratio_slope" not in training_frame.columns

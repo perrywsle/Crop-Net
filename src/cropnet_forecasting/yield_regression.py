@@ -22,6 +22,7 @@ from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.exceptions import UndefinedMetricWarning
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
+from sklearn.base import clone
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
@@ -1451,7 +1452,8 @@ def run_yield_regression(
     ).reset_index(drop=True)
     best_model_name = ml_results.iloc[0]["model"]
 
-    final_model = fitted_models[best_model_name]
+    holdout_model = fitted_models[best_model_name]
+    final_model = clone(holdout_model)
     final_model.fit(merged[feature_cols], merged["yield_bu_acre"].to_numpy(dtype=float))
 
     importance = get_feature_importance(
@@ -1495,7 +1497,7 @@ def run_yield_regression(
     year_cv_benchmark.to_csv(year_cv_benchmark_path, index=False)
 
     prediction_frame = build_prediction_frame(
-        final_model,
+        holdout_model,
         train_df,
         test_df,
         feature_cols,
@@ -1518,7 +1520,7 @@ def run_yield_regression(
     window_benchmark_path = output_dir / "window_benchmark.csv"
     window_benchmark.to_csv(window_benchmark_path, index=False)
 
-    residuals = build_residual_frame(final_model, test_df, feature_cols, "yield_bu_acre")
+    residuals = build_residual_frame(holdout_model, test_df, feature_cols, "yield_bu_acre")
     residuals_path = output_dir / "prediction_residuals.csv"
     residuals.to_csv(residuals_path, index=False)
 
