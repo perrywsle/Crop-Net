@@ -1,0 +1,9 @@
+{
+  "run_name": "corn_ia_monthly_2017_2022_batch_010",
+  "status": "completed",
+  "started_at": "2026-06-12T14:26:55+0000",
+  "ended_at": "2026-06-12T14:26:55+0000",
+  "runtime_seconds": 0.25206923484802246,
+  "error": null,
+  "output_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_010"
+}

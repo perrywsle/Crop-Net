@@ -1,0 +1,52 @@
+{
+  "input_feature_count": 31,
+  "kept_feature_count": 28,
+  "max_missing_fraction": 0.2,
+  "correlation_threshold": 0.995,
+  "dropped_sparse": [],
+  "dropped_zero_variance": [
+    "ndvi_above_0_7_ratio"
+  ],
+  "dropped_correlated": [
+    {
+      "dropped": "ag_vegetation_area_percent",
+      "kept": "ag_green_pixel_ratio",
+      "correlation": 1.0
+    },
+    {
+      "dropped": "ndvi_low_ratio",
+      "kept": "ndvi_above_0_3_ratio",
+      "correlation": 1.0
+    }
+  ],
+  "kept_features": [
+    "ag_green_pixel_ratio",
+    "ag_brown_yellow_pixel_ratio",
+    "ag_soil_exposure_ratio",
+    "ag_shadow_cloud_ratio",
+    "ag_mean_brightness",
+    "ag_texture_entropy",
+    "ag_field_uniformity_score",
+    "ndvi_mean",
+    "ndvi_median",
+    "ndvi_max",
+    "ndvi_std",
+    "ndvi_cv",
+    "ndvi_p25",
+    "ndvi_p75",
+    "ndvi_above_0_3_ratio",
+    "ndvi_above_0_5_ratio",
+    "ndvi_valid_coverage_ratio",
+    "weather_temp_mean",
+    "weather_temp_max",
+    "weather_temp_min",
+    "weather_gdd",
+    "weather_total_precipitation",
+    "weather_drought_index",
+    "weather_humidity_mean",
+    "weather_solar_radiation_mean",
+    "month",
+    "month_sin",
+    "month_cos"
+  ]
+}
