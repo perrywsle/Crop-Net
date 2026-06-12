@@ -17,6 +17,7 @@ from cropnet_forecasting import yield_regression
 from cropnet_forecasting.yield_regression import (
     aggregate_growing_season_features,
     build_model_pipelines,
+    build_monthly_training_frame,
     flatten_usda_path_groups,
     prune_feature_columns,
     read_monthly_features,
@@ -105,6 +106,19 @@ def _small_model_pipelines(random_state: int = 42, *, include_optional_models: b
     }
 
 
+def _small_selected_model_pipelines(
+    train_df,
+    feature_cols,
+    target_col,
+    *,
+    random_state: int = 42,
+    include_optional_models: bool = False,
+    tune_hyperparameters: bool = True,
+):
+    del train_df, feature_cols, target_col, random_state, include_optional_models, tune_hyperparameters
+    return _small_model_pipelines()
+
+
 def test_default_yield_models_are_the_baseline_three() -> None:
     """Direct yield benchmarking should default to the planned baseline models."""
     assert list(build_model_pipelines()) == ["Ridge", "RandomForest", "ExtraTrees"]
@@ -132,6 +146,34 @@ def test_annualization_adds_mean_slope_delta_and_amplitude() -> None:
     assert row["ag_green_pixel_ratio_slope"] == pytest.approx(1.0)
     assert row["ag_green_pixel_ratio_delta"] == pytest.approx(5.0)
     assert row["ag_green_pixel_ratio_amplitude"] == pytest.approx(5.0)
+
+
+def test_monthly_training_frame_copies_annual_yield_to_each_month() -> None:
+    monthly = pd.DataFrame(_monthly_rows())
+    usda = pd.DataFrame(
+        [
+            {
+                "county_id": "19001",
+                "crop_type": "corn",
+                "year": 2021,
+                "yield_bu_acre": 180.0,
+                "target_unit": "BU / ACRE",
+            }
+        ]
+    )
+
+    merged, feature_cols, error = build_monthly_training_frame(
+        monthly,
+        usda,
+        ["ag_green_pixel_ratio"],
+    )
+
+    assert error == ""
+    assert len(merged) == 6
+    assert sorted(merged["month"].unique().tolist()) == [4, 5, 6, 7, 8, 9]
+    assert set(merged["yield_bu_acre"]) == {180.0}
+    assert {"ag_green_pixel_ratio", "month", "month_sin", "month_cos"}.issubset(feature_cols)
+    assert "ag_green_pixel_ratio_slope" not in feature_cols
 
 
 def test_feature_pruning_is_deterministic() -> None:
@@ -188,6 +230,7 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     pd.DataFrame(_monthly_rows()).to_csv(monthly_path, index=False)
     _write_usda(usda_path)
     monkeypatch.setattr(yield_regression, "build_model_pipelines", _small_model_pipelines)
+    monkeypatch.setattr(yield_regression, "select_model_pipelines", _small_selected_model_pipelines)
 
     artifacts = run_yield_regression(
         monthly_path=monthly_path,
@@ -204,6 +247,8 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     assert artifacts.metadata_path.exists()
     assert artifacts.feature_group_benchmark_path.exists()
     assert artifacts.year_cv_benchmark_path.exists()
+    assert artifacts.month_benchmark_path.exists()
+    assert artifacts.window_benchmark_path.exists()
     assert artifacts.pruning_report_path.exists()
     assert artifacts.residuals_path.exists()
     assert artifacts.best_model_name == "Ridge"
@@ -213,9 +258,13 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
     training_frame = pd.read_csv(artifacts.training_frame_path)
     benchmark = pd.read_csv(artifacts.results_path)
     residuals = pd.read_csv(artifacts.residuals_path)
+    month_benchmark = pd.read_csv(artifacts.month_benchmark_path)
+    window_benchmark = pd.read_csv(artifacts.window_benchmark_path)
 
     assert hasattr(model, "predict")
     assert metadata["uses_forecast_generated_features"] is False
+    assert metadata["target_grain"] == "monthly"
+    assert metadata["label_strategy"] == "annual_yield_copied_to_months"
     assert metadata["target_units"] == ["BU / ACRE"]
     assert metadata["split_mode"] == "year_split (test_year=2022)"
     assert metadata["split_strategy"] == "year_split"
@@ -226,5 +275,8 @@ def test_run_yield_regression_saves_training_frame_model_and_metadata(
         "BaselinePreviousYearSameCounty",
     }.issubset(set(benchmark["model"]))
     assert {"prediction", "residual", "abs_error", "ape"}.issubset(residuals.columns)
+    assert sorted(month_benchmark["month"].unique().tolist()) == [4, 5, 6, 7, 8, 9]
+    assert "Apr-Sep" in set(window_benchmark["window"])
     assert "forecast_step" not in training_frame.columns
-    assert {"yield_bu_acre", "ag_green_pixel_ratio_slope"}.issubset(training_frame.columns)
+    assert {"yield_bu_acre", "ag_green_pixel_ratio", "month_sin", "month_cos"}.issubset(training_frame.columns)
+    assert "ag_green_pixel_ratio_slope" not in training_frame.columns

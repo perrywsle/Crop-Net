@@ -56,11 +56,13 @@ else:  # pragma: no cover - exercised when run as a module
     from .features import FEATURE_GROUP_SELECTIONS, META_COLS, selected_feature_columns
 
 GROWING_SEASON_MONTHS = (4, 5, 6, 7, 8, 9)
+TARGET_GRAINS = ("monthly", "annual")
 DEFAULT_MIN_OVERLAP_ROWS = 12
 DEFAULT_OUTPUT_SUBDIR = "yield_baseline"
 DEFAULT_MAX_MISSING_FRACTION = 0.20
 DEFAULT_CORRELATION_THRESHOLD = 0.995
 FEATURE_GROUP_BENCHMARKS = ("ag", "ndvi", "weather", "ag_ndvi", "ndvi_weather", "all")
+TIMING_FEATURES = ("month", "month_sin", "month_cos")
 TARGET_COLUMNS = {"yield_bu_acre", "target_unit"}
 ANNUAL_FEATURE_SUFFIXES = ("_slope", "_delta", "_amplitude")
 GENERATED_FORECAST_COLUMNS = {
@@ -107,6 +109,8 @@ class RegressionArtifacts:
     summary_path: Path
     feature_group_benchmark_path: Path
     year_cv_benchmark_path: Path
+    month_benchmark_path: Path
+    window_benchmark_path: Path
     pruning_report_path: Path
     residuals_path: Path
 
@@ -422,6 +426,53 @@ def build_training_frame(
     return merged.reset_index(drop=True), feature_cols, ""
 
 
+def add_month_timing_features(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out["month"] = pd.to_numeric(out["month"], errors="coerce").astype(int)
+    radians = 2.0 * np.pi * out["month"].to_numpy(dtype=float) / 12.0
+    out["month_sin"] = np.sin(radians)
+    out["month_cos"] = np.cos(radians)
+    return out
+
+
+def build_monthly_training_frame(
+    monthly_frame: pd.DataFrame,
+    usda_frame: pd.DataFrame,
+    feature_columns: list[str],
+) -> tuple[pd.DataFrame, list[str], str]:
+    frame = monthly_frame.copy()
+    present_features = [col for col in feature_columns if col in frame.columns]
+    if not present_features:
+        raise ValueError("None of the expected CropNet monthly feature columns were present.")
+
+    for col in present_features:
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    frame = add_month_timing_features(frame)
+
+    merge_keys = [key for key in ["county_id", "year", "crop_type"] if key in frame.columns and key in usda_frame.columns]
+    if "crop_type" in merge_keys:
+        frame["crop_type"] = frame["crop_type"].map(normalize_crop_type)
+        usda_frame = usda_frame.copy()
+        usda_frame["crop_type"] = usda_frame["crop_type"].map(normalize_crop_type)
+
+    merged = frame.merge(usda_frame, on=merge_keys, how="inner", suffixes=("", "_usda"))
+    if merged.empty:
+        return merged, merge_keys, (
+            "No county-year-month overlap was found between monthly features and USDA yield labels."
+        )
+
+    feature_cols = [
+        col
+        for col in present_features + list(TIMING_FEATURES)
+        if col in merged.columns and pd.api.types.is_numeric_dtype(merged[col])
+    ]
+    if not feature_cols:
+        raise ValueError("The merged monthly dataset does not contain any model feature columns.")
+
+    merged = merged.replace([np.inf, -np.inf], np.nan)
+    return merged.reset_index(drop=True), feature_cols, ""
+
+
 def base_feature_name(feature_name: str) -> str:
     for suffix in ANNUAL_FEATURE_SUFFIXES:
         if feature_name.endswith(suffix):
@@ -432,6 +483,13 @@ def base_feature_name(feature_name: str) -> str:
 def annualized_columns_for_group(feature_cols: list[str], feature_group: str) -> list[str]:
     base_features = set(selected_feature_columns(feature_group))
     return [col for col in feature_cols if base_feature_name(col) in base_features]
+
+
+def model_columns_for_group(feature_cols: list[str], feature_group: str) -> list[str]:
+    base_features = set(selected_feature_columns(feature_group))
+    selected = [col for col in feature_cols if base_feature_name(col) in base_features]
+    selected.extend([col for col in TIMING_FEATURES if col in feature_cols])
+    return list(dict.fromkeys(selected))
 
 
 def prune_feature_columns(
@@ -766,17 +824,10 @@ def split_dataset(df: pd.DataFrame, random_state: int = 42) -> tuple[pd.DataFram
                 "test_year": None,
             }
 
-    if len(df) < 4:
-        raise ValueError(
-            "Not enough matched rows to create a train/test split. "
-            f"Need at least 4 rows, found {len(df)}."
-        )
-
-    train, test = train_test_split(df, test_size=0.2, random_state=random_state)
-    return train.copy(), test.copy(), "row_split_fallback", {
-        "strategy": "row_split_fallback",
-        "test_year": None,
-    }
+    raise ValueError(
+        "Not enough independent years or counties to create a leakage-safe train/test split. "
+        f"Found {len(unique_years)} year(s), {len(unique_counties)} county/counties, and {len(df)} row(s)."
+    )
 
 
 def compute_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -853,6 +904,25 @@ def evaluate_naive_baselines(
     return pd.DataFrame(rows)
 
 
+def baseline_prediction_columns(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    target_col: str,
+) -> pd.DataFrame:
+    train_mean = float(np.nanmean(train_df[target_col].to_numpy(dtype=float)))
+    lookup = {
+        (str(row.county_id), int(row.year)): float(getattr(row, target_col))
+        for row in train_df[["county_id", "year", target_col]].drop_duplicates().itertuples(index=False)
+    }
+    out = pd.DataFrame(index=test_df.index)
+    out["BaselineTrainMean"] = train_mean
+    out["BaselinePreviousYearSameCounty"] = [
+        lookup.get((str(row.county_id), int(row.year) - 1), train_mean)
+        for row in test_df[["county_id", "year"]].itertuples(index=False)
+    ]
+    return out
+
+
 def evaluate_models(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -918,7 +988,7 @@ def evaluate_feature_group_benchmarks(
 ) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
     for group_name in FEATURE_GROUP_BENCHMARKS:
-        group_cols = annualized_columns_for_group(feature_cols, group_name)
+        group_cols = model_columns_for_group(feature_cols, group_name)
         if not group_cols:
             continue
         group_results, _ = evaluate_models(
@@ -989,7 +1059,10 @@ def build_residual_frame(
     target_col: str,
 ) -> pd.DataFrame:
     predictions = model.predict(test_df[feature_cols])
-    residuals = test_df[["county_id", "year", target_col]].copy()
+    base_cols = ["county_id", "year", target_col]
+    if "month" in test_df.columns:
+        base_cols.insert(2, "month")
+    residuals = test_df[base_cols].copy()
     if "crop_type" in test_df.columns:
         residuals.insert(1, "crop_type", test_df["crop_type"].to_numpy())
     residuals["prediction"] = predictions
@@ -1000,7 +1073,106 @@ def build_residual_frame(
         residuals["abs_error"] / residuals[target_col].abs() * 100.0,
         np.nan,
     )
-    return residuals.sort_values(["year", "county_id"]).reset_index(drop=True)
+    sort_cols = [col for col in ["year", "county_id", "month"] if col in residuals.columns]
+    return residuals.sort_values(sort_cols).reset_index(drop=True)
+
+
+def build_prediction_frame(
+    model: Pipeline,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    best_model_name: str,
+) -> pd.DataFrame:
+    base_cols = ["county_id", "year", "month", target_col]
+    if "crop_type" in test_df.columns:
+        base_cols.insert(1, "crop_type")
+    predictions = test_df[base_cols].copy()
+    predictions[best_model_name] = model.predict(test_df[feature_cols])
+    baselines = baseline_prediction_columns(train_df, test_df, target_col)
+    for col in baselines.columns:
+        predictions[col] = baselines[col].to_numpy(dtype=float)
+    return predictions
+
+
+def benchmark_prediction_groups(
+    prediction_frame: pd.DataFrame,
+    *,
+    group_column: str,
+    target_col: str,
+    model_columns: list[str],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for group_value, group in prediction_frame.groupby(group_column, sort=True):
+        y_true = group[target_col].to_numpy(dtype=float)
+        for model_name in model_columns:
+            rows.append(
+                regression_metric_row(
+                    y_true,
+                    group[model_name].to_numpy(dtype=float),
+                    model=model_name,
+                    model_type="baseline" if model_name.startswith("Baseline") else "ml",
+                    feature_group="all",
+                    n_train=0,
+                    n_test=len(group),
+                )
+                | {group_column: group_value}
+            )
+    return pd.DataFrame(rows)
+
+
+def build_month_benchmark(
+    prediction_frame: pd.DataFrame,
+    *,
+    target_col: str,
+    model_columns: list[str],
+) -> pd.DataFrame:
+    if "month" not in prediction_frame.columns:
+        return pd.DataFrame()
+    return benchmark_prediction_groups(
+        prediction_frame,
+        group_column="month",
+        target_col=target_col,
+        model_columns=model_columns,
+    ).sort_values(["month", "model_type", "rmse", "model"]).reset_index(drop=True)
+
+
+def build_window_benchmark(
+    prediction_frame: pd.DataFrame,
+    *,
+    target_col: str,
+    model_columns: list[str],
+) -> pd.DataFrame:
+    if "month" not in prediction_frame.columns:
+        return pd.DataFrame()
+    windows = {
+        "Jan": (1,),
+        "Jan-Mar": (1, 2, 3),
+        "Apr-Jun": (4, 5, 6),
+        "Apr-Sep": (4, 5, 6, 7, 8, 9),
+        "FullYear": tuple(range(1, 13)),
+    }
+    rows: list[dict[str, Any]] = []
+    for window_name, months in windows.items():
+        group = prediction_frame[prediction_frame["month"].isin(months)]
+        if group.empty:
+            continue
+        y_true = group[target_col].to_numpy(dtype=float)
+        for model_name in model_columns:
+            rows.append(
+                regression_metric_row(
+                    y_true,
+                    group[model_name].to_numpy(dtype=float),
+                    model=model_name,
+                    model_type="baseline" if model_name.startswith("Baseline") else "ml",
+                    feature_group="all",
+                    n_train=0,
+                    n_test=len(group),
+                )
+                | {"window": window_name, "months": " ".join(str(month) for month in months)}
+            )
+    return pd.DataFrame(rows).sort_values(["window", "model_type", "rmse", "model"]).reset_index(drop=True)
 
 
 def get_feature_importance(
@@ -1190,10 +1362,13 @@ def run_yield_regression(
     output_dir: Path | None = None,
     crop_type: str | None = None,
     feature_group: str = "all",
+    target_grain: str = "monthly",
     min_overlap_rows: int = DEFAULT_MIN_OVERLAP_ROWS,
     random_state: int = 42,
     include_optional_models: bool = False,
 ) -> RegressionArtifacts:
+    if target_grain not in TARGET_GRAINS:
+        raise ValueError(f"target_grain must be one of {TARGET_GRAINS}; got {target_grain!r}.")
     root = Path(__file__).resolve().parents[2]
     resolved_monthly_path = resolve_monthly_path(root, monthly_path)
     monthly = read_monthly_features(resolved_monthly_path)
@@ -1218,8 +1393,17 @@ def run_yield_regression(
     if crop_type is not None and "crop_type" in usda.columns:
         usda = usda[usda["crop_type"].map(normalize_crop_type).eq(crop_type)]
 
-    annual = aggregate_growing_season_features(monthly, selected_features)
-    merged, feature_cols, overlap_error = build_training_frame(monthly, usda, selected_features)
+    if target_grain == "monthly":
+        merged, feature_cols, overlap_error = build_monthly_training_frame(monthly, usda, selected_features)
+        overlap_frame = monthly
+        label_strategy = "annual_yield_copied_to_months"
+        training_frame_filename = "merged_monthly_training_frame.csv"
+    else:
+        annual = aggregate_growing_season_features(monthly, selected_features)
+        merged, feature_cols, overlap_error = build_training_frame(monthly, usda, selected_features)
+        overlap_frame = annual
+        label_strategy = "annualized_april_september_features"
+        training_frame_filename = "merged_annual_training_frame.csv"
     if merged.empty:
         suggestions = suggest_fips_codes(usda, monthly, limit=20)
         suggestion_text = " ".join(suggestions) if suggestions else "(no suggestion available)"
@@ -1231,7 +1415,7 @@ def run_yield_regression(
         )
 
     overlap_rows = len(merged)
-    summary = overlap_summary(annual, usda)
+    summary = overlap_summary(overlap_frame, usda)
     validate_overlap_or_raise(monthly, usda, overlap_rows, min_overlap_rows)
 
     if output_dir is None:
@@ -1310,11 +1494,35 @@ def run_yield_regression(
     year_cv_benchmark_path = output_dir / "year_cv_benchmark.csv"
     year_cv_benchmark.to_csv(year_cv_benchmark_path, index=False)
 
+    prediction_frame = build_prediction_frame(
+        final_model,
+        train_df,
+        test_df,
+        feature_cols,
+        "yield_bu_acre",
+        best_model_name,
+    )
+    month_benchmark = build_month_benchmark(
+        prediction_frame,
+        target_col="yield_bu_acre",
+        model_columns=[best_model_name, "BaselineTrainMean", "BaselinePreviousYearSameCounty"],
+    )
+    month_benchmark_path = output_dir / "month_benchmark.csv"
+    month_benchmark.to_csv(month_benchmark_path, index=False)
+
+    window_benchmark = build_window_benchmark(
+        prediction_frame,
+        target_col="yield_bu_acre",
+        model_columns=[best_model_name, "BaselineTrainMean", "BaselinePreviousYearSameCounty"],
+    )
+    window_benchmark_path = output_dir / "window_benchmark.csv"
+    window_benchmark.to_csv(window_benchmark_path, index=False)
+
     residuals = build_residual_frame(final_model, test_df, feature_cols, "yield_bu_acre")
     residuals_path = output_dir / "prediction_residuals.csv"
     residuals.to_csv(residuals_path, index=False)
 
-    training_frame_path = output_dir / "merged_annual_training_frame.csv"
+    training_frame_path = output_dir / training_frame_filename
     merged.to_csv(training_frame_path, index=False)
 
     model_path = output_dir / "best_yield_model.joblib"
@@ -1326,6 +1534,8 @@ def run_yield_regression(
         "usda_paths": resolved_usda_paths,
         "crop_type": crop_type or "mixed",
         "feature_group": feature_group,
+        "target_grain": target_grain,
+        "label_strategy": label_strategy,
         "feature_columns": feature_cols,
         "feature_columns_before_pruning": feature_cols_before_pruning,
         "target_column": "yield_bu_acre",
@@ -1350,6 +1560,8 @@ def run_yield_regression(
         "feature_importance_png": importance_path,
         "feature_group_benchmark_csv": feature_group_benchmark_path,
         "year_cv_benchmark_csv": year_cv_benchmark_path,
+        "month_benchmark_csv": month_benchmark_path,
+        "window_benchmark_csv": window_benchmark_path,
         "feature_pruning_report_json": pruning_report_path,
         "prediction_residuals_csv": residuals_path,
         "model_path": model_path,
@@ -1362,6 +1574,8 @@ def run_yield_regression(
         f"usda_paths={', '.join(str(path) for path in resolved_usda_paths)}",
         f"crop_type={crop_type or 'mixed'}",
         f"feature_group={feature_group}",
+        f"target_grain={target_grain}",
+        f"label_strategy={label_strategy}",
         f"split_mode={split_mode}",
         f"rows={len(merged)}",
         f"train_rows={len(train_df)}",
@@ -1375,6 +1589,8 @@ def run_yield_regression(
         f"results_csv={results_path}",
         f"feature_group_benchmark_csv={feature_group_benchmark_path}",
         f"year_cv_benchmark_csv={year_cv_benchmark_path}",
+        f"month_benchmark_csv={month_benchmark_path}",
+        f"window_benchmark_csv={window_benchmark_path}",
         f"feature_pruning_report_json={pruning_report_path}",
         f"prediction_residuals_csv={residuals_path}",
         f"training_frame_csv={training_frame_path}",
@@ -1395,6 +1611,8 @@ def run_yield_regression(
     print(f"Feature importance plot: {importance_path}")
     print(f"Feature group benchmark: {feature_group_benchmark_path}")
     print(f"Year CV benchmark: {year_cv_benchmark_path}")
+    print(f"Month benchmark: {month_benchmark_path}")
+    print(f"Window benchmark: {window_benchmark_path}")
 
     return RegressionArtifacts(
         results=results,
@@ -1415,6 +1633,8 @@ def run_yield_regression(
         summary_path=summary_path,
         feature_group_benchmark_path=feature_group_benchmark_path,
         year_cv_benchmark_path=year_cv_benchmark_path,
+        month_benchmark_path=month_benchmark_path,
+        window_benchmark_path=window_benchmark_path,
         pruning_report_path=pruning_report_path,
         residuals_path=residuals_path,
     )
@@ -1422,7 +1642,7 @@ def run_yield_regression(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Benchmark CropNet yield regression on annualized monthly features."
+        description="Benchmark CropNet yield regression from monthly or annualized features."
     )
     parser.add_argument(
         "--monthly-path",
@@ -1456,6 +1676,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="all",
         choices=sorted({"all", "ag", "ndvi", "weather", "ag_ndvi", "ag_weather", "ndvi_weather"}),
         help="Feature subset to benchmark.",
+    )
+    parser.add_argument(
+        "--target-grain",
+        type=str,
+        default="monthly",
+        choices=TARGET_GRAINS,
+        help="Use monthly rows with copied annual labels, or legacy annualized rows.",
     )
     parser.add_argument(
         "--min-overlap-rows",
@@ -1495,6 +1722,7 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output_dir,
             crop_type=args.crop_type,
             feature_group=args.feature_group,
+            target_grain=args.target_grain,
             min_overlap_rows=args.min_overlap_rows,
             random_state=args.random_state,
             include_optional_models=args.include_optional_models,

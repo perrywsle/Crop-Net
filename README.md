@@ -127,10 +127,13 @@ python src/cropnet_forecasting/yield_regression.py \
     "data/usda_labels/USDA Crop Dataset/Corn/2022/USDA_Corn_County_2022.csv" \
   --crop-type corn \
   --feature-group all \
-  --output-dir outputs/yield_baseline/corn_ia_2017_2022_gs
+  --target-grain monthly \
+  --output-dir outputs/yield_baseline/corn_ia_2017_2022_monthly
 ```
 
-The direct yield baseline rejects blank-fill or forecast prediction tables and saves a merged annual training frame, model benchmark, feature-group benchmark, leave-one-year-out benchmark, pruning report, residuals, best model artifact, and metadata JSON.
+The monthly direct yield baseline copies each county-year USDA annual yield onto the matching monthly rows, so a model can learn to predict annual yield from any available month. It rejects blank-fill or forecast prediction tables and saves a merged monthly training frame, model benchmark, per-month benchmark, month-window benchmark, pruning report, residuals, best model artifact, and metadata JSON.
+
+For true January-only prediction, extract all quarters (`Q1 Q2 Q3 Q4`) before training; the Q2/Q3 workflow only supports April-September monthly benchmarks.
 
 ### Convert GUI sample data
 ```bash
