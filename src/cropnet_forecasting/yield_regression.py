@@ -17,7 +17,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.exceptions import UndefinedMetricWarning
 from sklearn.impute import SimpleImputer
@@ -45,6 +44,14 @@ try:  # Optional dependency.
     _HAS_XGBOOST = True
 except ImportError:  # pragma: no cover - optional dependency
     _HAS_XGBOOST = False
+
+try:  # Optional dependency.
+    import seaborn as sns
+
+    _HAS_SEABORN = True
+except ImportError:  # pragma: no cover - optional dependency
+    sns = None
+    _HAS_SEABORN = False
 
 if __package__ in {None, ""}:
     PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -1225,7 +1232,8 @@ def save_feature_importance_plot(
     title: str = "Top 15 Features Driving Yield Prediction",
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sns.set_theme(style="whitegrid", context="talk")
+    if _HAS_SEABORN:
+        sns.set_theme(style="whitegrid", context="talk")
     plt.figure(figsize=(12, 8))
 
     if importance_frame.empty:
@@ -1241,14 +1249,19 @@ def save_feature_importance_plot(
         plt.axis("off")
     else:
         plot_frame = importance_frame.head(15).sort_values("importance", ascending=True)
-        ax = sns.barplot(data=plot_frame, x="importance", y="feature", color="#4C72B0")
+        if _HAS_SEABORN:
+            ax = sns.barplot(data=plot_frame, x="importance", y="feature", color="#4C72B0")
+        else:
+            ax = plt.gca()
+            ax.barh(plot_frame["feature"], plot_frame["importance"], color="#4C72B0")
         ax.set_title(title, pad=14)
         ax.set_xlabel("importance")
         ax.set_ylabel("feature")
         ax.grid(True, axis="x", linestyle="--", alpha=0.3)
-        colors = sns.color_palette("viridis", n_colors=len(plot_frame))
-        for patch, color in zip(ax.patches, colors):
-            patch.set_facecolor(color)
+        if _HAS_SEABORN:
+            colors = sns.color_palette("viridis", n_colors=len(plot_frame))
+            for patch, color in zip(ax.patches, colors):
+                patch.set_facecolor(color)
         for patch, value in zip(ax.patches, plot_frame["importance"].tolist()):
             ax.text(
                 patch.get_width(),

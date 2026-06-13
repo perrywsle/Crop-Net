@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TaoCrop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
+    <script defer src="/static/app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">C</div>
+          <div>
+            <div class="brand-name">TaoCrop</div>
+            <div class="brand-subtitle">AI-powered yield predictor for farmers</div>
+          </div>
+        </div>
+        <div class="sidebar-card">
+          <div class="sidebar-title">How it works</div>
+          <ol class="steps">
+            <li>Upload a farm folder with crop and weather files.</li>
+            <li>Review the monthly signals in plain language.</li>
+            <li>Compare the yield estimate, drivers, and charts.</li>
+          </ol>
+        </div>
+        <div class="sidebar-card accent">
+          <div class="sidebar-title">Default model</div>
+          <div class="sidebar-copy">Saved monthly yield model tuned for county-level corn yield prediction.</div>
+        </div>
+      </aside>
+
+      <main class="app">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Local dashboard</p>
+            <h1>TaoCrop - AI-powered Yield Predictor for Farmers</h1>
+            <p class="lede">
+              Upload your field data, see the estimated yield, and review the crop and weather
+              signals behind the result in a clean browser dashboard.
+            </p>
+          </div>
+          <div class="hero-stats" id="heroStats"></div>
+        </section>
+
+        <section class="card upload-card">
+          <div class="upload-header">
+            <div>
+              <h2>Run a prediction</h2>
+              <p>Upload a folder of AG, NDVI, and weather files from your farm.</p>
+            </div>
+          </div>
+
+          <form id="uploadForm" class="upload-form">
+            <label class="field">
+              <span>County ID</span>
+              <input name="county_id" value="19001" inputmode="numeric" />
+            </label>
+            <label class="field">
+              <span>Crop</span>
+              <input name="crop_type" value="corn" />
+            </label>
+            <label class="field grow">
+              <span>Folder of farm files</span>
+              <input id="folderInput" type="file" webkitdirectory directory multiple />
+            </label>
+            <button class="primary-button" type="submit">Predict yield</button>
+          </form>
+          <div class="support-note">
+            Folder upload works with large field folders. If your browser cannot select folders, use a zip file instead.
+          </div>
+        </section>
+
+        <section class="status-row">
+          <div class="status-pill" id="runStatus">Ready</div>
+          <div class="status-text" id="runMessage">No run yet.</div>
+        </section>
+
+        <section class="result-grid hidden" id="resultGrid">
+          <article class="card result-card big">
+            <div class="card-topline">Yield estimate</div>
+            <div class="headline-value" id="headlineYield">--</div>
+            <div class="headline-subtitle" id="headlineMonth">Waiting for data</div>
+          </article>
+          <article class="card result-card">
+            <div class="card-topline">Model quality</div>
+            <div class="metric" id="modelQuality">--</div>
+            <div class="metric-sub">Holdout RMSE and MAE from the saved benchmark.</div>
+          </article>
+          <article class="card result-card">
+            <div class="card-topline">Top driver</div>
+            <div class="metric" id="topDriver">--</div>
+            <div class="metric-sub">Most influential feature in the saved model.</div>
+          </article>
+          <article class="card result-card">
+            <div class="card-topline">Data coverage</div>
+            <div class="metric" id="dataCoverage">--</div>
+            <div class="metric-sub">How many monthly rows were prepared for the model.</div>
+          </article>
+        </section>
+
+        <section class="tabs hidden" id="tabs">
+          <button class="tab-button active" data-tab="overview">Overview</button>
+          <button class="tab-button" data-tab="yield">Yield result</button>
+          <button class="tab-button" data-tab="drivers">Drivers</button>
+          <button class="tab-button" data-tab="details">Details</button>
+        </section>
+
+        <section class="panels hidden" id="panels">
+          <section class="panel active" id="overviewPanel">
+            <div class="panel-grid">
+              <article class="card panel-card">
+                <h3>Yield over time</h3>
+                <svg class="chart" id="yieldChart" viewBox="0 0 1200 360" preserveAspectRatio="xMidYMid meet"></svg>
+              </article>
+              <article class="card panel-card">
+                <h3>Farmer-friendly summary</h3>
+                <div id="summaryList" class="stack"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel" id="yieldPanel">
+            <div class="panel-grid single">
+              <article class="card panel-card">
+                <h3>Monthly yield trajectory</h3>
+                <svg class="chart chart-tall" id="trajectoryChart" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid meet"></svg>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel" id="driversPanel">
+            <div id="featureGroupTabs" class="inner-tabs"></div>
+            <section class="card panel-card driver-primary-panel hidden" id="primaryDriverPanel">
+              <h3>Primary Driver</h3>
+              <div class="driver-primary-grid">
+                <div id="primaryDriverSummary" class="driver-primary-summary"></div>
+                <svg class="chart chart-tall" id="importanceChart" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid meet"></svg>
+              </div>
+            </section>
+            <div id="featureGroupPanels"></div>
+          </section>
+
+          <section class="panel" id="detailsPanel">
+            <div class="panel-grid single vertical">
+              <article class="card panel-card">
+                <h3>Benchmark summary</h3>
+                <div id="benchmarkTable" class="table-shell"></div>
+              </article>
+              <article class="card panel-card">
+                <h3>Prepared monthly features</h3>
+                <div id="featureTable" class="table-shell"></div>
+              </article>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

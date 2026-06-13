@@ -45,12 +45,12 @@ python examples/inference_example.py --checkpoint weights/lstm_best.pt --scaler 
 python examples/blank_fill_example.py --monthly-table path/to/monthly_features.parquet --checkpoint weights/lstm_best.pt --scaler weights/scaler.csv --config configs/residual_lstm_all.yaml --year 2021 --known-months 1 --output outputs/blank_fill_predictions.csv
 ```
 
-### Desktop GUI
+### Local web app
 ```bash
-python -m crop_fusion_ai.gui.app
+python main.py
 ```
 
-The GUI expects a folder that contains modality subfolders such as:
+The browser app starts a local server on `http://127.0.0.1:8000` by default and opens a farmer-friendly dashboard. It accepts a folder that contains modality subfolders such as:
 ```text
 sample_data/
   ag/
@@ -61,7 +61,7 @@ sample_data/
     2017_12.csv
 ```
 
-The app scans the directory recursively, extracts monthly features, and shows a 12-month autoregressive forecast in tabs.
+The app scans the directory recursively, extracts monthly features, and shows yield estimates, grouped feature cards, and clean charts in tabs.
 
 ### Download sample data
 ```bash

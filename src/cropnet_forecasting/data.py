@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .features import META_COLS, selected_feature_columns
@@ -24,10 +25,11 @@ def load_monthly_features(path: str | Path, feature_group: str = "all") -> pd.Da
 
 def coerce_monthly_features(frame: pd.DataFrame, feature_group: str = "all") -> pd.DataFrame:
     feature_names = selected_feature_columns(feature_group)
-    missing = [col for col in META_COLS + feature_names if col not in frame.columns]
+    selected_columns = list(dict.fromkeys(META_COLS + feature_names))
+    missing = [col for col in selected_columns if col not in frame.columns]
     if missing:
         raise ValueError(f"Monthly feature table is missing required columns: {missing}")
-    out = frame[META_COLS + feature_names].copy()
+    out = frame[selected_columns].copy()
     out["county_id"] = out["county_id"].astype(str).str.zfill(5)
     out["crop_type"] = out["crop_type"].astype(str)
     out["year"] = out["year"].astype(int)
@@ -37,11 +39,27 @@ def coerce_monthly_features(frame: pd.DataFrame, feature_group: str = "all") -> 
 
 def prepare_monthly_features(frame: pd.DataFrame, feature_names: list[str]) -> pd.DataFrame:
     """Coerce and impute a monthly feature frame for inference."""
-    missing = [col for col in META_COLS + feature_names if col not in frame.columns]
+    selected_columns = list(dict.fromkeys(META_COLS + feature_names))
+
+    # Add cyclical month encodings on demand so inference works even when the
+    # incoming table only has the raw month column.
+    if "month" in frame.columns:
+        month_values = pd.to_numeric(frame["month"], errors="coerce").astype(float)
+        if "month_sin" in selected_columns and "month_sin" not in frame.columns:
+            frame = frame.copy()
+            radians = 2.0 * month_values * np.pi / 12.0
+            frame["month_sin"] = np.sin(radians)
+        if "month_cos" in selected_columns and "month_cos" not in frame.columns:
+            if frame is not None and "month_sin" not in frame.columns:
+                frame = frame.copy()
+            radians = 2.0 * month_values * np.pi / 12.0
+            frame["month_cos"] = np.cos(radians)
+
+    missing = [col for col in selected_columns if col not in frame.columns]
     if missing:
         raise ValueError(f"Monthly feature table is missing required model columns: {missing}")
 
-    coerced = frame[META_COLS + feature_names].copy()
+    coerced = frame[selected_columns].copy()
     coerced["county_id"] = coerced["county_id"].astype(str).str.zfill(5)
     coerced["crop_type"] = coerced["crop_type"].astype(str)
     coerced["year"] = coerced["year"].astype(int)
