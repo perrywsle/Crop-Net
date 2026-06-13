@@ -1,4 +1,4 @@
-"""Controller helpers that keep GUI actions testable without Tkinter state."""
+"""Controller helpers that keep forecasting actions testable without UI state."""
 
 from __future__ import annotations
 

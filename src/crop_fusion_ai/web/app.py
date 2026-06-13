@@ -295,13 +295,11 @@ def create_app() -> FastAPI:
             max_part_size=MAX_UPLOAD_PART_SIZE,
         )
 
-        county_id = str(form.get("county_id") or "").strip()
+        county_id = str(form.get("county_id") or "19001").strip()
         crop_type = str(form.get("crop_type") or "").strip()
         relative_paths = str(form.get("relative_paths") or "[]")
         files = form.getlist("files")
 
-        if not county_id:
-            raise HTTPException(status_code=400, detail="county_id is required")
         if not crop_type:
             raise HTTPException(status_code=400, detail="crop_type is required")
         if not files:

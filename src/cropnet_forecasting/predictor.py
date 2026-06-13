@@ -25,19 +25,32 @@ class BlankFillPredictor:
     last_predictions: pd.DataFrame | None = None
 
     @classmethod
-    def from_artifacts(cls, checkpoint_path: str | Path, scaler_path: str | Path, config_path: str | Path, device: str | None = None) -> "BlankFillPredictor":
+    def from_artifacts(
+        cls,
+        checkpoint_path: str | Path,
+        scaler_path: str | Path,
+        config_path: str | Path,
+        device: str | None = None,
+        *,
+        model_name: str | None = None,
+    ) -> "BlankFillPredictor":
         config = load_config(config_path)
-        model_name = str(config.get("model_name") or config.get("model") or Path(checkpoint_path).name.replace("_best.pt", ""))
+        resolved_model_name = str(
+            model_name
+            or config.get("model_name")
+            or config.get("model")
+            or Path(checkpoint_path).name.replace("_best.pt", "")
+        )
         feature_group = str(config.get("feature_group", "all"))
         feature_names = selected_feature_columns(feature_group)
         scaler = FeatureScaler.from_csv(scaler_path).subset(feature_names)
         runtime_device = device or config.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
-        model = CropNetModelFactory.load_checkpoint(checkpoint_path, model_name=model_name, device=runtime_device)
+        model = CropNetModelFactory.load_checkpoint(checkpoint_path, model_name=resolved_model_name, device=runtime_device)
         return cls(
             model=model,
             scaler=scaler,
             feature_names=feature_names,
-            model_name=model_name,
+            model_name=resolved_model_name,
             target_mode=str(config.get("target_mode", "raw")),
             seq_len=int(config.get("seq_len", config.get("lookback_months", 6))),
             device=str(runtime_device),

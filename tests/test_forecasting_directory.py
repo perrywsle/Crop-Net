@@ -10,6 +10,7 @@ import pandas as pd
 from PIL import Image
 
 from crop_fusion_ai.gui.forecasting import build_monthly_features_from_directory, scan_directory
+from crop_fusion_ai.gui.forecasting import build_forecast_from_directory
 from crop_fusion_ai.gui.controller import PreprocessingController, UploadMetadata
 from crop_fusion_ai.preprocessing.ndvi import extract_ndvi_features
 from cropnet_forecasting.blank_fill import rollout_autoregressive
@@ -164,6 +165,76 @@ def test_preprocessing_controller_reuses_cached_features(
     assert not first.empty
     assert not second.empty
     assert controller.last_cache_hit is True
+
+
+def test_build_forecast_from_directory_runs_all_four_models(tmp_path: Path, monkeypatch) -> None:
+    monthly = pd.DataFrame(
+        [
+            {
+                "county_id": "01003",
+                "crop_type": "corn",
+                "year": 2021,
+                "month": 11,
+                "date": pd.Timestamp("2021-11-01"),
+                "feature_a": 1.0,
+            },
+            {
+                "county_id": "01003",
+                "crop_type": "corn",
+                "year": 2021,
+                "month": 12,
+                "date": pd.Timestamp("2021-12-01"),
+                "feature_a": 2.0,
+            },
+        ]
+    )
+
+    class _DummyPredictor:
+        def __init__(self, model_name: str) -> None:
+            self.model_name = model_name
+            self.feature_names = ["feature_a"]
+            self.seq_len = 2
+
+        def predict_future_months(self, monthly_features: pd.DataFrame, horizon: int = 12, progress=None):  # noqa: ANN001
+            del progress
+            dates = pd.date_range("2022-01-01", periods=horizon, freq="MS")
+            forecast = pd.DataFrame(
+                {
+                    "county_id": "01003",
+                    "crop_type": "corn",
+                    "year": dates.year,
+                    "month": dates.month,
+                    "date": dates,
+                    "forecast_step": range(1, horizon + 1),
+                    "source_note": "dummy",
+                    "feature_a": [float(len(self.model_name) + step) for step in range(horizon)],
+                }
+            )
+            return forecast
+
+    monkeypatch.setattr(
+        "crop_fusion_ai.gui.forecasting.build_monthly_features_from_directory",
+        lambda *args, **kwargs: (monthly, ["ag", "ndvi", "weather"]),
+    )
+    monkeypatch.setattr("crop_fusion_ai.gui.forecasting.prepare_monthly_features", lambda frame, feature_names: frame)
+    monkeypatch.setattr(
+        "cropnet_forecasting.predictor.BlankFillPredictor.from_artifacts",
+        lambda checkpoint_path, scaler_path, config_path, device=None, model_name=None: _DummyPredictor(model_name or Path(checkpoint_path).stem.replace("_best", "")),
+    )
+
+    result = build_forecast_from_directory(
+        tmp_path,
+        county_id="01003",
+        crop_type="corn",
+        checkpoint_path="weights/lstm_best.pt",
+        scaler_path="weights/scaler.csv",
+        config_path="configs/residual_lstm_all.yaml",
+        horizon=3,
+    )
+
+    assert set(result.forecast_by_model) == {"lstm", "attention", "gru", "gamma_ssm"}
+    assert result.predictor.model_name == "lstm"
+    assert len(result.forecast) == 3
 
 
 def test_extract_ndvi_features_falls_back_for_low_signal_images(tmp_path: Path) -> None:

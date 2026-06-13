@@ -47,7 +47,6 @@
               signals behind the result in a clean browser dashboard.
             </p>
           </div>
-          <div class="hero-stats" id="heroStats"></div>
         </section>
 
         <section class="card upload-card">
@@ -60,18 +59,19 @@
 
           <form id="uploadForm" class="upload-form">
             <label class="field">
-              <span>County ID</span>
-              <input name="county_id" value="19001" inputmode="numeric" />
-            </label>
-            <label class="field">
               <span>Crop</span>
-              <input name="crop_type" value="corn" />
+              <select name="crop_type">
+                <option value="corn" selected>Corn</option>
+                <option value="cotton">Cotton</option>
+                <option value="soybeans">Soybeans</option>
+                <option value="winter wheat">Winter wheat</option>
+              </select>
             </label>
             <label class="field grow">
               <span>Folder of farm files</span>
               <input id="folderInput" type="file" webkitdirectory directory multiple />
             </label>
-            <button class="primary-button" type="submit">Predict yield</button>
+            <button class="primary-button" type="submit">Predict</button>
           </form>
           <div class="support-note">
             Folder upload works with large field folders. If your browser cannot select folders, use a zip file instead.
@@ -131,6 +131,7 @@
             <div class="panel-grid single">
               <article class="card panel-card">
                 <h3>Monthly yield trajectory</h3>
+                <div id="yieldLegend" class="feature-legend"></div>
                 <svg class="chart chart-tall" id="trajectoryChart" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid meet"></svg>
               </article>
             </div>
@@ -138,6 +139,7 @@
 
           <section class="panel" id="driversPanel">
             <div id="featureGroupTabs" class="inner-tabs"></div>
+            <div id="featureLegend" class="feature-legend"></div>
             <section class="card panel-card driver-primary-panel hidden" id="primaryDriverPanel">
               <h3>Primary Driver</h3>
               <div class="driver-primary-grid">

@@ -47,6 +47,67 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
+const MODEL_ORDER = ["lstm", "attention", "gru", "gamma_ssm"];
+const MODEL_LABELS = {
+  lstm: "LSTM",
+  attention: "Attention",
+  gru: "GRU",
+  gamma_ssm: "Gamma SSM",
+};
+const MODEL_COLORS = {
+  lstm: "#2d6cdf",
+  attention: "#2f7d57",
+  gru: "#d14b4b",
+  gamma_ssm: "#7c4fd4",
+};
+const MODEL_STYLES = {
+  lstm: { stroke: "#2d6cdf", fill: "#2d6cdf", line: "-", marker: "o" },
+  attention: { stroke: "#2f7d57", fill: "#2f7d57", line: "--", marker: "D" },
+  gru: { stroke: "#d14b4b", fill: "#d14b4b", line: ":", marker: "s" },
+  gamma_ssm: { stroke: "#7c4fd4", fill: "#7c4fd4", line: "-.", marker: "^" },
+};
+const YIELD_MODEL_ORDER = [
+  "current",
+  "naive_lag1",
+  "seasonal_last_year",
+  "lstm",
+  "attention",
+  "gru",
+  "ensemble_mean",
+  "ensemble_weighted",
+];
+const YIELD_MODEL_LABELS = {
+  current: "Current model",
+  naive_lag1: "Naive lag-1",
+  seasonal_last_year: "Seasonal last year",
+  lstm: "LSTM",
+  attention: "Attention",
+  gru: "GRU",
+  ensemble_mean: "Ensemble mean",
+  ensemble_weighted: "Ensemble weighted",
+};
+const YIELD_MODEL_COLORS = {
+  current: "#d9772b",
+  naive_lag1: "#2d6cdf",
+  seasonal_last_year: "#2f7d57",
+  lstm: "#7c4fd4",
+  attention: "#0f766e",
+  gru: "#d14b4b",
+  ensemble_mean: "#64748b",
+  ensemble_weighted: "#8b5e34",
+};
+const YIELD_MODEL_STYLES = {
+  current: { stroke: "#d9772b", line: "-" },
+  naive_lag1: { stroke: "#2d6cdf", line: "--" },
+  seasonal_last_year: { stroke: "#2f7d57", line: ":" },
+  lstm: { stroke: "#7c4fd4", line: "-." },
+  attention: { stroke: "#0f766e", line: "--" },
+  gru: { stroke: "#d14b4b", line: ":" },
+  ensemble_mean: { stroke: "#64748b", line: "-." },
+  ensemble_weighted: { stroke: "#8b5e34", line: "--" },
+};
+const YIELD_OUTLIER_LIMIT = 10000;
+
 function buildChatContextSnapshot(result) {
   if (!result) return {};
   return {
@@ -291,31 +352,9 @@ function showPanels(visible) {
 }
 
 function buildHeroStats(config) {
-  const stats = [
-    {
-      value: config.model?.best_model?.model ?? config.model?.model_name ?? "Model",
-      label: "Best saved model",
-    },
-    {
-      value: config.model?.holdout?.rmse ? formatValue(config.model.holdout.rmse) : "Ready",
-      label: "Holdout RMSE",
-    },
-    {
-      value: config.defaults?.crop_type ?? "corn",
-      label: "Default crop",
-    },
-  ];
-
-  el("#heroStats").innerHTML = stats
-    .map(
-      (item) => `
-        <div class="hero-stat">
-          <span class="value">${item.value}</span>
-          <span class="label">${item.label}</span>
-        </div>
-      `,
-    )
-    .join("");
+  const target = el("#heroStats");
+  if (!target) return;
+  target.innerHTML = "";
 }
 
 function renderSummaryList(result) {
@@ -602,13 +641,214 @@ function drawBarChart(svg, items, options = {}) {
   });
 }
 
+function parseTimelineLabel(value) {
+  if (!value) return "";
+  if (typeof value === "string" && /^\d{4}-\d{2}$/.test(value)) return value;
+  return resolveMonthLabel(value);
+}
+
+function timelineLabelValue(label) {
+  if (!label || typeof label !== "string") return null;
+  const match = label.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 100 + Number(match[2]);
+}
+
+function filterSeriesAfterLabel(series, boundaryLabel) {
+  const boundaryValue = timelineLabelValue(boundaryLabel);
+  if (boundaryValue === null) return (series || []).slice();
+  return (series || []).filter((item) => {
+    const label = parseTimelineLabel(item.label || item.month_label || item.date);
+    const value = timelineLabelValue(label);
+    return value !== null && value > boundaryValue;
+  });
+}
+
+function normalizeSeriesPoints(series, valueScale = 1) {
+  return (series || [])
+    .map((item) => ({
+      label: parseTimelineLabel(item.label || item.month_label || item.date),
+      value: Number(item.value ?? item.predicted_yield ?? item.y_pred ?? item.predicted ?? item),
+    }))
+    .filter((item) => item.label && Number.isFinite(item.value))
+    .map((item) => ({
+      label: item.label,
+      value: item.value * valueScale,
+    }));
+}
+
+function isYieldSeriesOutlier(series, referenceSeries) {
+  const values = (series || [])
+    .map((item) => Number(item.value ?? item.predicted_yield ?? item.y_pred ?? item.predicted ?? item))
+    .filter((value) => Number.isFinite(value));
+  if (!values.length) return true;
+  const maxAbs = Math.max(...values.map((value) => Math.abs(value)));
+  if (maxAbs > YIELD_OUTLIER_LIMIT) return true;
+  const refValues = (referenceSeries || [])
+    .map((item) => Number(item.value ?? item.predicted_yield ?? item.y_pred ?? item.predicted ?? item))
+    .filter((value) => Number.isFinite(value) && Math.abs(value) < YIELD_OUTLIER_LIMIT);
+  if (!refValues.length) return false;
+  const refMedian = refValues.slice().sort((a, b) => a - b)[Math.floor(refValues.length / 2)];
+  if (!Number.isFinite(refMedian) || Math.abs(refMedian) < 1e-6) return false;
+  return maxAbs > Math.max(YIELD_OUTLIER_LIMIT, Math.abs(refMedian) * 25);
+}
+
+function drawMultiSeriesChart(svg, observedSeries, forecastSeriesByModel, options = {}) {
+  clearSvg(svg);
+  const { width, height } = svgSize(svg);
+  const padding = { top: 24, right: 24, bottom: 54, left: 60, ...(options.padding || {}) };
+  const showAxes = options.showAxes !== false;
+  const showTicks = options.showTicks !== false;
+  const showXAxisLabels = options.showXAxisLabels !== false;
+  const valueScale = options.valueScale ?? 1;
+  const bridgeForecastToObserved = options.bridgeForecastToObserved !== false;
+  const tickFormatter = options.tickFormatter || ((value) => value.toFixed(1));
+  const modelOrder = options.modelOrder || MODEL_ORDER;
+  const modelLabels = options.modelLabels || MODEL_LABELS;
+  const modelColors = options.modelColors || MODEL_COLORS;
+  const modelStyles = options.modelStyles || MODEL_STYLES;
+  const observed = normalizeSeriesPoints(observedSeries, valueScale);
+  const forecasts = modelOrder
+    .map((modelKey) => ({
+      key: modelKey,
+      label: modelLabels[modelKey] || modelKey,
+      style: modelStyles[modelKey] || { stroke: modelColors[modelKey] || "#7c4fd4", line: "-" },
+      series: normalizeSeriesPoints(forecastSeriesByModel?.[modelKey] || [], valueScale),
+    }))
+    .filter((item) => item.series.length > 0);
+  const allPoints = [...observed, ...forecasts.flatMap((item) => item.series)];
+  if (!allPoints.length) {
+    if (showAxes) drawAxes(svg, width, height, padding);
+    svg.appendChild(svgEl("text", { x: width / 2, y: height / 2, "text-anchor": "middle", fill: "#756457" })).textContent = "No data";
+    return;
+  }
+
+  const timeline = [...new Set(allPoints.map((item) => item.label))].sort();
+  const min = Math.min(...allPoints.map((item) => item.value));
+  const max = Math.max(...allPoints.map((item) => item.value));
+  const span = Math.max(max - min, 1e-6);
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const step = innerWidth / Math.max(timeline.length - 1, 1);
+  const xMap = new Map(timeline.map((label, index) => [label, padding.left + step * index]));
+
+  if (showAxes) drawAxes(svg, width, height, padding);
+  if (options.boundaryLabel) {
+    const boundaryX = xMap.get(options.boundaryLabel);
+    if (Number.isFinite(boundaryX)) {
+      svg.appendChild(svgEl("line", {
+        x1: boundaryX,
+        y1: padding.top,
+        x2: boundaryX,
+        y2: height - padding.bottom,
+        stroke: "rgba(124, 79, 212, 0.28)",
+        "stroke-width": 2,
+        "stroke-dasharray": "8,8",
+      }));
+      svg.appendChild(svgEl("text", {
+        x: boundaryX + 8,
+        y: padding.top + 16,
+        fill: "#756457",
+        "font-size": 11,
+      })).textContent = "Forecast start";
+    }
+  }
+  const observedAnchor = observed.length ? observed[observed.length - 1] : null;
+  const drawSeries = (series, { stroke, line }, isObserved = false) => {
+    const baseSeries = series.slice();
+    if (!isObserved && bridgeForecastToObserved && observedAnchor && baseSeries.length > 0) {
+      if (baseSeries[0].label !== observedAnchor.label) {
+        baseSeries.unshift(observedAnchor);
+      }
+    }
+    const points = baseSeries
+      .map((item) => ({
+        label: item.label,
+        x: xMap.get(item.label),
+        y: padding.top + innerHeight - ((item.value - min) / span) * innerHeight,
+        value: item.value,
+      }))
+      .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
+    if (!points.length) return;
+    const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+    if (isObserved) {
+      const areaPath = [
+        `M ${points[0].x} ${height - padding.bottom}`,
+        `L ${points[0].x} ${points[0].y}`,
+        ...points.slice(1).map((point) => `L ${point.x} ${point.y}`),
+        `L ${points[points.length - 1].x} ${height - padding.bottom}`,
+        "Z",
+      ].join(" ");
+      svg.appendChild(svgEl("path", { d: areaPath, fill: "rgba(217,119,43,0.14)" }));
+    }
+    svg.appendChild(svgEl("path", {
+      d: linePath,
+      fill: "none",
+      stroke,
+      "stroke-width": 3.4,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      ...(line === "--" ? { "stroke-dasharray": "10,8" } : {}),
+      ...(line === ":" ? { "stroke-dasharray": "4,8" } : {}),
+      ...(line === "-." ? { "stroke-dasharray": "10,6,2,6" } : {}),
+    }));
+    points.forEach((point) => {
+      svg.appendChild(svgEl("circle", {
+        cx: point.x,
+        cy: point.y,
+        r: isObserved ? 4.2 : 4.6,
+        fill: isObserved ? "#fff7ef" : `#f8f2ff`,
+        stroke: isObserved ? "#d9772b" : stroke,
+        "stroke-width": 2,
+      }));
+    });
+  };
+
+  drawSeries(observed, { stroke: "#d9772b", fill: "#d9772b" }, true);
+  forecasts.forEach((item) => drawSeries(item.series, item.style, false));
+
+  if (showTicks) {
+    const ticks = Math.min(4, allPoints.length);
+    for (let i = 0; i < ticks; i += 1) {
+      const t = ticks === 1 ? 0 : i / (ticks - 1);
+      const value = min + t * span;
+      const y = padding.top + innerHeight - t * innerHeight;
+      svg.appendChild(svgEl("text", {
+        x: padding.left - 10,
+        y: y + 4,
+        "text-anchor": "end",
+        fill: "#756457",
+        "font-size": 12,
+      })).textContent = tickFormatter(value);
+    }
+  }
+
+  if (showXAxisLabels) {
+    const labelStep = timeline.length > 12 ? 2 : 1;
+    timeline.forEach((label, index) => {
+      if (index % labelStep !== 0 && index !== timeline.length - 1) return;
+      const x = xMap.get(label);
+      svg.appendChild(svgEl("text", {
+        x,
+        y: height - 6,
+        "text-anchor": "middle",
+        fill: "#756457",
+        "font-size": 11,
+      })).textContent = label;
+    });
+  }
+}
+
 function renderFeatureGroups(result) {
-  const groups = result.feature_groups || [];
+  const groups = (result.feature_groups || []).filter((group) => group.group !== "season");
   const tabs = [
     { group: "primary-driver", label: "Primary Driver" },
     ...groups.map((group) => ({ group: group.group, label: group.label })),
   ];
-  if (!state.activeGroup) state.activeGroup = "primary-driver";
+  if (!state.activeGroup || !tabs.some((tab) => tab.group === state.activeGroup)) {
+    state.activeGroup = "primary-driver";
+  }
+  const forecastModels = result.feature_forecasts_by_model || {};
 
   el("#featureGroupTabs").innerHTML = tabs
     .map(
@@ -619,6 +859,16 @@ function renderFeatureGroups(result) {
       `,
     )
     .join("");
+  const legendTarget = el("#featureLegend");
+  if (legendTarget) {
+    legendTarget.innerHTML = [
+      `<span class="legend-chip"><span class="legend-dot" style="background:#d9772b"></span>Observed</span>`,
+      ...MODEL_ORDER.map(
+        (modelKey) =>
+          `<span class="legend-chip"><span class="legend-dot" style="background:${MODEL_COLORS[modelKey]}"></span>${MODEL_LABELS[modelKey]}</span>`,
+      ),
+    ].join("");
+  }
 
   const allFeatures = groups.flatMap((group) => group.features || []);
   const drivers = (result.drivers || []).slice(0, 5);
@@ -685,33 +935,32 @@ function renderFeatureGroups(result) {
     group.features.forEach((feature, index) => {
       const svg = document.getElementById(`spark-${group.group}-${index}`);
       if (!svg) return;
-      const series = Array.isArray(feature.series) && feature.series.some((item) => item && item.value !== null && item.value !== undefined)
+      const observedSeries = Array.isArray(feature.series) && feature.series.some((item) => item && item.value !== null && item.value !== undefined)
         ? feature.series
         : (result.monthly_features || []).map((row) => ({
             month_label: resolveMonthLabel(row),
             value: row?.[feature.name] ?? null,
           }));
-      const cleanedSeries = series.map((item) => ({
-        label: resolveMonthLabel(item),
-        value: item.value,
-      }));
-      drawLineChart(
+      const modelForecasts = {};
+      MODEL_ORDER.forEach((modelKey) => {
+        const rows = forecastModels[modelKey] || [];
+        modelForecasts[modelKey] = rows.map((row) => ({
+          label: resolveMonthLabel(row),
+          value: row?.[feature.name] ?? null,
+        }));
+      });
+      drawMultiSeriesChart(
         svg,
-        cleanedSeries,
+        observedSeries,
+        modelForecasts,
         {
           id: `spark-${group.group}-${index}`,
           showAxes: true,
           showTicks: true,
-          showPoints: true,
           showXAxisLabels: true,
-          padding: { top: 16, right: 20, bottom: 24, left: 52 },
+          padding: { top: 16, right: 20, bottom: 30, left: 52 },
           valueScale: feature.display === "percent" ? 100 : 1,
           tickFormatter: feature.display === "percent" ? (value) => `${value.toFixed(0)}%` : (value) => value.toFixed(1),
-          splitIndex: Math.max(1, Math.floor(cleanedSeries.length / 2)),
-          leftStroke: "#d9772b",
-          rightStroke: "#7c4fd4",
-          leftPointFill: "#fff7ef",
-          rightPointFill: "#f2eaff",
         },
       );
     });
@@ -778,43 +1027,76 @@ function renderFeatureTable(result) {
 }
 
 function renderCharts(result) {
-  const predictions = result.yield_series || [];
-  const cleaned = predictions.map((item) => ({
-    label: resolveMonthLabel(item),
-    value: item.predicted_yield,
-  }));
-  drawLineChart(
+  const yieldSeriesByModel = result.yield_series_by_model || {};
+  const currentSeries = yieldSeriesByModel.current || result.yield_series || [];
+  const trajectorySeriesByModel = result.yield_trajectory_by_model || {};
+  const historyBoundaryLabel = currentSeries.length ? resolveMonthLabel(currentSeries[currentSeries.length - 1]) : "";
+  const displayYieldModels = {};
+  Object.entries(trajectorySeriesByModel).forEach(([key, series]) => {
+    if (key === "current") return;
+    const trimmed = filterSeriesAfterLabel(series, historyBoundaryLabel);
+    if (trimmed.length && !isYieldSeriesOutlier(trimmed, currentSeries)) {
+      displayYieldModels[key] = trimmed;
+    }
+  });
+  const yieldLegendTarget = el("#yieldLegend");
+  if (yieldLegendTarget) {
+    yieldLegendTarget.innerHTML = [
+      `<span class="legend-chip"><span class="legend-dot" style="background:${YIELD_MODEL_COLORS.current}"></span>History</span>`,
+      ...Object.entries(displayYieldModels).map(([key]) => `<span class="legend-chip"><span class="legend-dot" style="background:${YIELD_MODEL_COLORS[key] || "#7c4fd4"}"></span>${YIELD_MODEL_LABELS[key] || key}</span>`),
+    ].join("");
+  }
+  drawMultiSeriesChart(
     el("#yieldChart"),
-    cleaned,
+    currentSeries.map((item) => ({
+      label: resolveMonthLabel(item),
+      value: item.predicted_yield,
+    })),
+    displayYieldModels,
     {
       id: "yieldChart",
-      splitIndex: Math.max(1, Math.floor(cleaned.length / 2)),
-      leftStroke: "#d9772b",
-      rightStroke: "#7c4fd4",
+      modelOrder: YIELD_MODEL_ORDER,
+      modelLabels: YIELD_MODEL_LABELS,
+      modelColors: YIELD_MODEL_COLORS,
+      modelStyles: YIELD_MODEL_STYLES,
       showXAxisLabels: true,
       showPoints: true,
+      bridgeForecastToObserved: true,
+      boundaryLabel: historyBoundaryLabel,
     },
   );
 
-  drawLineChart(
+  drawMultiSeriesChart(
     el("#trajectoryChart"),
-    cleaned,
+    currentSeries.map((item) => ({
+      label: resolveMonthLabel(item),
+      value: item.predicted_yield,
+    })),
+    displayYieldModels,
     {
       id: "trajectoryChart",
-      splitIndex: Math.max(1, Math.floor(cleaned.length / 2)),
-      leftStroke: "#d9772b",
-      rightStroke: "#7c4fd4",
+      modelOrder: ["naive_lag1", "seasonal_last_year", "lstm", "attention", "gru", "ensemble_mean", "ensemble_weighted"],
+      modelLabels: YIELD_MODEL_LABELS,
+      modelColors: YIELD_MODEL_COLORS,
+      modelStyles: YIELD_MODEL_STYLES,
       showXAxisLabels: true,
       showPoints: true,
+      bridgeForecastToObserved: true,
+      boundaryLabel: historyBoundaryLabel,
     },
   );
 }
 
 function renderHeadline(result) {
   const headline = result.headline || {};
-  const latest = headline.month ? `${headline.year}-${String(headline.month).padStart(2, "0")}` : "Latest available month";
-  el("#headlineYield").textContent = `${formatValue(headline.predicted_yield)} ${headline.unit || ""}`.trim();
-  el("#headlineMonth").textContent = latest;
+  const forecast = result.forecast_headline || {};
+  const displayHeadline = forecast.predicted_yield !== undefined && forecast.predicted_yield !== null ? forecast : headline;
+  const displayMonth = displayHeadline.month_label
+    || (displayHeadline.year && displayHeadline.month
+      ? `${displayHeadline.year}-${String(displayHeadline.month).padStart(2, "0")}`
+      : "Latest available month");
+  el("#headlineYield").textContent = `${formatValue(displayHeadline.predicted_yield)} ${displayHeadline.unit || headline.unit || ""}`.trim();
+  el("#headlineMonth").textContent = displayMonth;
   const summary = result.summary || {};
   const best = summary.best_model || {};
   el("#modelQuality").textContent = best.rmse ? `RMSE ${formatValue(best.rmse)} | MAE ${formatValue(best.mae)}` : "Ready";
@@ -854,7 +1136,6 @@ async function submitUpload(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const formData = new FormData(form);
-  const countyId = formData.get("county_id");
   const cropType = formData.get("crop_type");
   const files = el("#folderInput").files;
   if (!files || files.length === 0) {
@@ -862,7 +1143,6 @@ async function submitUpload(event) {
   }
 
   const upload = new FormData();
-  upload.set("county_id", countyId);
   upload.set("crop_type", cropType);
   const paths = [];
   Array.from(files).forEach((file) => {

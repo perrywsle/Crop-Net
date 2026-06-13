@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pandas as pd
 
 from crop_fusion_ai.web.feature_labels import label_payload
+import crop_fusion_ai.web.service as web_service_module
 from crop_fusion_ai.web.service import YieldModelService
 from cropnet_forecasting.data import prepare_monthly_features
+from cropnet_forecasting.models import CropNetModelFactory, infer_architecture_from_state_dict
 
 
 def _synthetic_monthly_frame(service: YieldModelService) -> pd.DataFrame:
@@ -74,3 +77,49 @@ def test_predict_from_monthly_frame_returns_friendly_payload() -> None:
     assert len(result["feature_groups"]) >= 1
     assert result["monthly_features"][-1]["predicted_yield"] > 0
     assert result["drivers"][0]["label"]
+    assert "current" in result["yield_series_by_model"]
+    assert "lstm" in result["yield_series_by_model"]
+
+
+def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypatch, tmp_path) -> None:
+    service = YieldModelService()
+    frame = _synthetic_monthly_frame(service)
+    source_files = [SimpleNamespace(path=tmp_path / "ag" / "2022_04.png", modality="ag", year=2022, month=4, day=None)]
+
+    monkeypatch.setattr(service, "build_monthly_frame", lambda *args, **kwargs: (frame, source_files))
+    monkeypatch.setattr(
+        web_service_module,
+        "build_forecast_from_monthly_features",
+        lambda *args, **kwargs: SimpleNamespace(
+            forecast_by_model={
+                "lstm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 1.0}]),
+                "attention": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 2.0}]),
+                "gru": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 3.0}]),
+                "gamma_ssm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 4.0}]),
+            },
+            predictor_by_model={key: SimpleNamespace(model_name=key) for key in ("lstm", "attention", "gru", "gamma_ssm")},
+        ),
+    )
+
+    result = service.predict_from_directory(tmp_path, county_id="19001", crop_type="corn")
+
+    assert set(result["feature_forecasts_by_model"]) == {"lstm", "attention", "gru", "gamma_ssm"}
+    assert result["feature_forecasts_by_model"]["gamma_ssm"][0]["month_label"] == "2022-07"
+
+
+def test_gamma_ssm_architecture_alias_is_supported() -> None:
+    state_dict = {
+        "blocks.0.in_proj.weight": pd.DataFrame([[0.0] * 35] * 64).to_numpy(),
+        "head.2.bias": pd.Series([0.0] * 35).to_numpy(),
+    }
+
+    params = infer_architecture_from_state_dict("gamma_ssm", state_dict)
+
+    assert params["input_dim"] == 35
+    assert params["output_dim"] == 35
+
+
+def test_tiny_mamba_ssm_checkpoint_loads_without_legacy_script() -> None:
+    model = CropNetModelFactory.load_checkpoint("weights/tiny_mamba_ssm_best.pt", model_name="tiny_mamba_ssm", device="cpu")
+
+    assert model.__class__.__name__ == "MambaStyleForecaster"

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from crop_fusion_ai.gui.forecasting import build_monthly_features_from_directory
+from crop_fusion_ai.gui.forecasting import build_forecast_from_monthly_features
 from crop_fusion_ai.preprocessing.common import aggregate_monthly_feature_frame
 from cropnet_forecasting.data import prepare_monthly_features
 
@@ -46,6 +47,40 @@ DEFAULT_BENCHMARK_PATH = (
     / "corn_ia_2017_2022_monthly"
     / "yield_model_benchmark.csv"
 )
+DEFAULT_FEATURE_FORECAST_CONFIG = Path(__file__).resolve().parents[3] / "configs" / "residual_lstm_all.yaml"
+DEFAULT_FEATURE_FORECAST_SCALER = Path(__file__).resolve().parents[3] / "weights" / "scaler.csv"
+DEFAULT_FEATURE_FORECAST_CHECKPOINT = Path(__file__).resolve().parents[3] / "weights" / "lstm_best.pt"
+YIELD_MODEL_DIR = Path(__file__).resolve().parents[3] / "outputs" / "predicted_yield_experiments" / "yield_models"
+YIELD_MODEL_VARIANTS: dict[str, dict[str, Any]] = {
+    "naive_lag1": {
+        "label": "Naive lag-1",
+        "path": YIELD_MODEL_DIR / "naive_lag1" / "best_yield_model.joblib",
+    },
+    "seasonal_last_year": {
+        "label": "Seasonal last year",
+        "path": YIELD_MODEL_DIR / "seasonal_last_year" / "best_yield_model.joblib",
+    },
+    "lstm": {
+        "label": "LSTM",
+        "path": YIELD_MODEL_DIR / "lstm" / "best_yield_model.joblib",
+    },
+    "attention": {
+        "label": "Attention",
+        "path": YIELD_MODEL_DIR / "transformer_encoder" / "best_yield_model.joblib",
+    },
+    "gru": {
+        "label": "GRU",
+        "path": YIELD_MODEL_DIR / "gru" / "best_yield_model.joblib",
+    },
+    "ensemble_mean": {
+        "label": "Ensemble mean",
+        "path": YIELD_MODEL_DIR / "ensemble_mean" / "best_yield_model.joblib",
+    },
+    "ensemble_weighted": {
+        "label": "Ensemble weighted",
+        "path": YIELD_MODEL_DIR / "ensemble_weighted" / "best_yield_model.joblib",
+    },
+}
 
 
 def _json_default(value: Any) -> Any:
@@ -162,6 +197,28 @@ class YieldModelSummary:
         }
 
 
+def _predict_yield_rows(model: Any, frame: pd.DataFrame, feature_names: list[str]) -> list[dict[str, Any]]:
+    prediction_frame = frame.copy()
+    model_feature_names_attr = getattr(model, "feature_names_in_", None)
+    model_feature_names = [str(name) for name in model_feature_names_attr] if model_feature_names_attr is not None else feature_names
+    aligned_features = prediction_frame.reindex(columns=model_feature_names)
+    prediction_frame["predicted_yield"] = model.predict(aligned_features)
+    rows: list[dict[str, Any]] = []
+    for row in prediction_frame.itertuples(index=False):
+        month_value = int(getattr(row, "month")) if pd.notna(getattr(row, "month")) else None
+        rows.append(
+            {
+                "county_id": str(getattr(row, "county_id")),
+                "crop_type": str(getattr(row, "crop_type")),
+                "year": int(getattr(row, "year")) if pd.notna(getattr(row, "year")) else None,
+                "month": month_value,
+                "month_label": _month_label(pd.Series(row._asdict())),
+                "predicted_yield": float(getattr(row, "predicted_yield")),
+            }
+        )
+    return rows
+
+
 class YieldModelService:
     """Load the saved monthly yield model and produce farmer-friendly results."""
 
@@ -177,6 +234,7 @@ class YieldModelService:
         self.feature_importance_path = Path(feature_importance_path)
         self.benchmark_path = Path(benchmark_path)
         self._model = joblib.load(self.model_path)
+        self._yield_models = self._load_yield_models()
         self._metadata = self._load_json(self.metadata_path)
         benchmark = self._load_benchmark(self.benchmark_path)
         self._summary = YieldModelSummary(
@@ -216,6 +274,19 @@ class YieldModelService:
         if not expected.issubset(frame.columns):
             return pd.DataFrame()
         return frame
+
+    @staticmethod
+    def _load_yield_models() -> dict[str, dict[str, Any]]:
+        models: dict[str, dict[str, Any]] = {}
+        for key, spec in YIELD_MODEL_VARIANTS.items():
+            path = Path(spec["path"])
+            if not path.exists():
+                continue
+            models[key] = {
+                "label": spec["label"],
+                "model": joblib.load(path),
+            }
+        return models
 
     @staticmethod
     def _extract_metric(benchmark: pd.DataFrame, metric: str) -> float | None:
@@ -301,17 +372,19 @@ class YieldModelService:
             "month": int(latest_row["month"]) if pd.notna(latest_row.get("month")) else None,
         }
 
-        prediction_rows = []
-        for row in prediction_frame.itertuples(index=False):
-            month_value = int(getattr(row, "month")) if pd.notna(getattr(row, "month")) else None
-            prediction_rows.append(
+        prediction_rows = _predict_yield_rows(self._model, prediction_frame, feature_names)
+        yield_series_by_model: dict[str, list[dict[str, Any]]] = {
+            "current": prediction_rows,
+        }
+        yield_model_payload = [{"key": "current", "label": self.model_name, "series": prediction_rows}]
+        for model_key, model_info in self._yield_models.items():
+            model_rows = _predict_yield_rows(model_info["model"], prediction_frame, feature_names)
+            yield_series_by_model[model_key] = model_rows
+            yield_model_payload.append(
                 {
-                    "county_id": str(getattr(row, "county_id")),
-                    "crop_type": str(getattr(row, "crop_type")),
-                    "year": int(getattr(row, "year")) if pd.notna(getattr(row, "year")) else None,
-                    "month": month_value,
-                    "month_label": _month_label(pd.Series(row._asdict())),
-                    "predicted_yield": float(getattr(row, "predicted_yield")),
+                    "key": model_key,
+                    "label": str(model_info["label"]),
+                    "series": model_rows,
                 }
             )
 
@@ -383,6 +456,8 @@ class YieldModelService:
             "headline": headline,
             "prediction_rows": prediction_rows,
             "yield_series": prediction_rows,
+            "yield_series_by_model": yield_series_by_model,
+            "yield_models": yield_model_payload,
             "feature_groups": feature_group_payload,
             "monthly_features": prediction_frame.assign(
                 month_label=prediction_frame[["year", "month"]].apply(_month_label, axis=1)
@@ -406,6 +481,55 @@ class YieldModelService:
             progress=progress,
         )
         payload = self.predict_from_monthly_frame(monthly_features)
+        feature_forecasts = build_forecast_from_monthly_features(
+            monthly_features,
+            source_files,
+            county_id=county_id,
+            crop_type=crop_type,
+            checkpoint_path=DEFAULT_FEATURE_FORECAST_CHECKPOINT,
+            scaler_path=DEFAULT_FEATURE_FORECAST_SCALER,
+            config_path=DEFAULT_FEATURE_FORECAST_CONFIG,
+            progress=progress,
+        )
+        future_feature_frame = feature_forecasts.forecast_by_model.get("lstm")
+        if future_feature_frame is None or future_feature_frame.empty:
+            future_feature_frame = next(iter(feature_forecasts.forecast_by_model.values()), pd.DataFrame())
+        yield_trajectory_by_model: dict[str, list[dict[str, Any]]] = {}
+        if not future_feature_frame.empty:
+            future_feature_frame = future_feature_frame.copy()
+            if "county_id" not in future_feature_frame.columns:
+                future_feature_frame["county_id"] = str(county_id).zfill(5)
+            if "crop_type" not in future_feature_frame.columns:
+                future_feature_frame["crop_type"] = str(crop_type)
+            future_feature_frame = future_feature_frame.sort_values(["county_id", "crop_type", "year", "month"]).reset_index(drop=True)
+            future_feature_frame = future_feature_frame.replace({np.nan: None})
+            yield_trajectory_by_model["current"] = _predict_yield_rows(self._model, future_feature_frame, self.feature_names)
+            for model_key, model_info in self._yield_models.items():
+                yield_trajectory_by_model[model_key] = _predict_yield_rows(model_info["model"], future_feature_frame, self.feature_names)
+        forecast_headline = None
+        current_trajectory = yield_trajectory_by_model.get("current") or []
+        if current_trajectory:
+            forecast_headline = dict(current_trajectory[-1])
+            forecast_headline["model_name"] = self.model_name
+            forecast_headline["unit"] = self._summary.target_units or "BU / ACRE"
+        payload["feature_forecasts_by_model"] = {
+            model_key: forecast.assign(
+                month_label=forecast[["year", "month"]].apply(_month_label, axis=1)
+            ).replace({np.nan: None}).to_dict(orient="records")
+            for model_key, forecast in feature_forecasts.forecast_by_model.items()
+        }
+        payload["feature_forecast_models"] = [
+            {
+                "key": model_key,
+                "label": feature_forecasts.predictor_by_model[model_key].model_name.replace("_", " ").title()
+                if model_key in feature_forecasts.predictor_by_model
+                else model_key,
+            }
+            for model_key in feature_forecasts.forecast_by_model.keys()
+        ]
+        payload["yield_trajectory_by_model"] = yield_trajectory_by_model
+        if forecast_headline is not None:
+            payload["forecast_headline"] = forecast_headline
         payload["source_files"] = [
             {
                 "path": str(item.path),

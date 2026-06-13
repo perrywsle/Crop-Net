@@ -38,6 +38,7 @@ class _DummyService:
             "drivers": [],
             "monthly_features": [],
             "feature_importance": [],
+            "feature_forecasts_by_model": {},
         }
 
 

@@ -48,6 +48,30 @@ class DirectoryForecastResult:
     forecast: pd.DataFrame
     predictor: BlankFillPredictor
     source_files: list[DirectorySample]
+    forecast_by_model: dict[str, pd.DataFrame]
+    predictor_by_model: dict[str, BlankFillPredictor]
+
+
+MODEL_SPECS: dict[str, dict[str, str]] = {
+    "lstm": {
+        "label": "LSTM",
+        "checkpoint": "weights/lstm_best.pt",
+    },
+    "attention": {
+        "label": "Attention",
+        "checkpoint": "weights/transformer_encoder_best.pt",
+    },
+    "gru": {
+        "label": "GRU",
+        "checkpoint": "weights/gru_best.pt",
+    },
+    "gamma_ssm": {
+        "label": "Gamma SSM",
+        "checkpoint": "weights/tiny_mamba_ssm_best.pt",
+    },
+}
+
+MODEL_ORDER: tuple[str, ...] = ("lstm", "attention", "gru", "gamma_ssm")
 
 
 def _infer_modality(path: Path) -> ModalityName | None:
@@ -212,6 +236,77 @@ def build_monthly_features_from_directory(
     return monthly_features, samples
 
 
+def build_forecast_from_monthly_features(
+    monthly_features: pd.DataFrame,
+    source_files: list[DirectorySample],
+    *,
+    county_id: str,
+    crop_type: str,
+    checkpoint_path: str | Path,
+    scaler_path: str | Path,
+    config_path: str | Path,
+    horizon: int = 12,
+    device: str | None = None,
+    progress: ProgressCallback | None = None,
+) -> DirectoryForecastResult:
+    """Run all learned feature forecasters on an already prepared monthly frame."""
+    if progress is not None:
+        progress("model_load", 0, len(MODEL_SPECS), "Loading model checkpoints")
+    from cropnet_forecasting.predictor import BlankFillPredictor
+
+    forecast_by_model: dict[str, pd.DataFrame] = {}
+    predictor_by_model: dict[str, BlankFillPredictor] = {}
+    default_predictor: BlankFillPredictor | None = None
+    default_forecast: pd.DataFrame | None = None
+    prepared: pd.DataFrame | None = None
+    model_items = list(MODEL_SPECS.items())
+
+    for index, (model_key, spec) in enumerate(model_items, start=1):
+        if progress is not None:
+            progress("model_load", index - 1, len(model_items), f"Loading {spec['label']} checkpoint")
+        model_checkpoint = checkpoint_path if model_key == "lstm" else spec["checkpoint"]
+        predictor = BlankFillPredictor.from_artifacts(
+            model_checkpoint,
+            scaler_path,
+            config_path,
+            device=device,
+            model_name="transformer_encoder" if model_key == "attention" else model_key,
+        )
+        predictor_by_model[model_key] = predictor
+        if default_predictor is None:
+            default_predictor = predictor
+            prepared = prepare_monthly_features(monthly_features, default_predictor.feature_names)
+            if progress is not None:
+                progress(
+                    "feature_align",
+                    len(default_predictor.feature_names),
+                    len(default_predictor.feature_names),
+                    f"Aligned {len(default_predictor.feature_names)}/{len(default_predictor.feature_names)} model input features",
+                )
+        assert prepared is not None
+        if progress is not None:
+            progress("forecast", 0, horizon, f"Forecasting next {horizon} months with {spec['label']}")
+        model_forecast = predictor.predict_future_months(prepared, horizon=horizon, progress=progress)
+        forecast_by_model[model_key] = model_forecast
+        if default_forecast is None:
+            default_forecast = model_forecast
+        if progress is not None:
+            progress("model_done", index, len(model_items), f"Completed {spec['label']} forecast")
+
+    if default_predictor is None or default_forecast is None:
+        raise ValueError("No forecasting models could be loaded.")
+    if progress is not None:
+        progress("done", horizon, horizon, f"Forecast complete: {len(default_forecast)} rows")
+    return DirectoryForecastResult(
+        monthly_features=prepared,
+        forecast=default_forecast,
+        predictor=default_predictor,
+        source_files=source_files,
+        forecast_by_model=forecast_by_model,
+        predictor_by_model=predictor_by_model,
+    )
+
+
 def build_forecast_from_directory(
     root_dir: str | Path,
     *,
@@ -233,32 +328,15 @@ def build_forecast_from_directory(
         controller=controller,
         progress=progress,
     )
-    if progress is not None:
-        progress("model_load", 0, 1, "Loading model and scaler")
-    from cropnet_forecasting.predictor import BlankFillPredictor
-
-    predictor = BlankFillPredictor.from_artifacts(
-        checkpoint_path,
-        scaler_path,
-        config_path,
+    return build_forecast_from_monthly_features(
+        monthly_features,
+        samples,
+        county_id=county_id,
+        crop_type=crop_type,
+        checkpoint_path=checkpoint_path,
+        scaler_path=scaler_path,
+        config_path=config_path,
+        horizon=horizon,
         device=device,
-    )
-    if progress is not None:
-        progress(
-            "feature_align",
-            len(predictor.feature_names),
-            len(predictor.feature_names),
-            f"Aligned {len(predictor.feature_names)}/{len(predictor.feature_names)} model input features",
-        )
-    prepared = prepare_monthly_features(monthly_features, predictor.feature_names)
-    if progress is not None:
-        progress("forecast", 0, horizon, f"Forecasting next {horizon} months")
-    forecast = predictor.predict_future_months(prepared, horizon=horizon, progress=progress)
-    if progress is not None:
-        progress("done", horizon, horizon, f"Forecast complete: {len(forecast)} rows")
-    return DirectoryForecastResult(
-        monthly_features=prepared,
-        forecast=forecast,
-        predictor=predictor,
-        source_files=samples,
+        progress=progress,
     )
