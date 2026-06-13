@@ -18,6 +18,14 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from crop_fusion_ai.web.chat import (
+    build_dashboard_context,
+    chat_with_ollama,
+    list_models,
+    model_info,
+)
 from crop_fusion_ai.web.feature_labels import FEATURE_GROUPS, label_payload
 from crop_fusion_ai.web.service import YieldModelService
 
@@ -27,6 +35,19 @@ UPLOAD_STAGE_DIR = Path(__file__).resolve().parents[3] / "data" / "cache" / "web
 MAX_UPLOAD_FILES = 10000
 MAX_UPLOAD_FIELDS = 1000
 MAX_UPLOAD_PART_SIZE = 25 * 1024 * 1024
+
+
+class ChatMessagePayload(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(min_length=1)
+
+
+class ChatRequestPayload(BaseModel):
+    model: str = Field(min_length=1)
+    messages: list[ChatMessagePayload] = Field(default_factory=list)
+    dashboard_context: dict[str, Any] | None = None
+    base_url: str | None = None
+
 
 @dataclass(slots=True)
 class JobState:
@@ -309,6 +330,49 @@ def create_app() -> FastAPI:
             ),
         )
         return {"job_id": job.job_id, "status": job.status}
+
+    @app.get("/api/chat/models")
+    def api_chat_models() -> dict[str, Any]:
+        try:
+            models = list_models()
+        except ConnectionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "models": [
+                {
+                    "name": str(model.get("name") or model.get("model") or ""),
+                    "model": str(model.get("model") or model.get("name") or ""),
+                    "size": model.get("size"),
+                    "modified_at": model.get("modified_at"),
+                    "details": model.get("details") or {},
+                }
+                for model in models
+                if model.get("name") or model.get("model")
+            ]
+        }
+
+    @app.get("/api/chat/models/{model_name}")
+    def api_chat_model_info(model_name: str) -> dict[str, Any]:
+        try:
+            return model_info(model_name)
+        except ConnectionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/chat")
+    def api_chat(payload: ChatRequestPayload) -> dict[str, Any]:
+        base_url = payload.base_url or "http://localhost:11434"
+        try:
+            response = chat_with_ollama(
+                model=payload.model,
+                messages=[message.model_dump() for message in payload.messages],
+                dashboard_context=build_dashboard_context(payload.dashboard_context),
+                base_url=base_url,
+            )
+        except ConnectionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return response
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

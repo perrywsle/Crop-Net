@@ -41,6 +41,36 @@ class _DummyService:
         }
 
 
+def _install_chat_stubs(monkeypatch) -> None:
+    monkeypatch.setattr(web_app_module, "list_models", lambda: [{"name": "llama3.1", "model": "llama3.1", "details": {"parameter_size": "8B"}}])
+    monkeypatch.setattr(
+        web_app_module,
+        "model_info",
+        lambda model_name: {
+            "model": model_name,
+            "context_length": 8192,
+            "parameters": "num_ctx 8192",
+            "capabilities": ["chat"],
+            "details": {"parameter_size": "8B"},
+            "raw": {"parameters": "num_ctx 8192"},
+        },
+    )
+    monkeypatch.setattr(
+        web_app_module,
+        "chat_with_ollama",
+        lambda **kwargs: {
+            "model": kwargs["model"],
+            "reply": "The crop looks healthy.",
+            "stats": {
+                "input_tokens": 120,
+                "output_tokens": 24,
+                "tokens_per_second": 18.5,
+                "context_length": 8192,
+            },
+        },
+    )
+
+
 def test_health_and_config_endpoints_work() -> None:
     with TestClient(create_app()) as client:
         health = client.get("/healthz")
@@ -99,3 +129,55 @@ def test_staged_upload_folder_is_stable(tmp_path, monkeypatch) -> None:
 
     assert first == second
     assert (first / ".complete").exists()
+
+
+def test_chat_endpoints_return_models_and_reply(monkeypatch) -> None:
+    monkeypatch.setattr(web_app_module, "YieldModelService", _DummyService)
+    _install_chat_stubs(monkeypatch)
+
+    with TestClient(create_app()) as client:
+        models = client.get("/api/chat/models")
+        info = client.get("/api/chat/models/llama3.1")
+        reply = client.post(
+            "/api/chat",
+            json={
+                "model": "llama3.1",
+                "messages": [{"role": "user", "content": "What do you see?"}],
+                "dashboard_context": {
+                    "headline": {"predicted_yield": 123.4},
+                    "monthly_features": [],
+                },
+            },
+        )
+
+    assert models.status_code == 200
+    assert models.json()["models"][0]["name"] == "llama3.1"
+    assert info.status_code == 200
+    assert info.json()["context_length"] == 8192
+    assert reply.status_code == 200
+    assert reply.json()["reply"] == "The crop looks healthy."
+
+
+def test_chat_helper_flattens_structured_message(monkeypatch) -> None:
+    from langchain_core.messages import AIMessage
+    import crop_fusion_ai.web.chat as chat_module
+
+    class _DummyChat:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            self.kwargs = kwargs
+
+        def invoke(self, prompt_messages):  # noqa: ANN001
+            del prompt_messages
+            return AIMessage(content=[{"type": "text", "text": "The crop looks healthy."}])
+
+    monkeypatch.setattr(chat_module, "ChatOllama", _DummyChat)
+
+    payload = chat_module.chat_with_ollama(
+        model="llama3.1",
+        messages=[{"role": "user", "content": "How is the crop?"}],
+        dashboard_context={"headline": {"predicted_yield": 123.4}},
+        base_url="http://localhost:11434",
+    )
+
+    assert payload["reply"] == "The crop looks healthy."
+    assert payload["model"] == "llama3.1"

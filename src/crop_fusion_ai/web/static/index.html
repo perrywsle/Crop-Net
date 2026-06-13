@@ -163,5 +163,34 @@
         </section>
       </main>
     </div>
+
+    <button class="chat-launcher" id="chatOpenButton" type="button" aria-label="Open farm chat">
+      Chat
+    </button>
+
+    <div class="chat-backdrop hidden" id="chatBackdrop"></div>
+    <aside class="chat-panel hidden" id="chatPanel" aria-label="Farm chat">
+      <div class="chat-shell">
+        <header class="chat-header">
+          <div>
+            <div class="chat-kicker">TaoCrop assistant</div>
+            <h2>Ask about your current run</h2>
+          </div>
+          <button class="chat-close" id="chatCloseButton" type="button" aria-label="Close chat">×</button>
+        </header>
+        <div class="chat-context" id="chatContextSummary"></div>
+        <div class="chat-messages" id="chatMessages" aria-live="polite"></div>
+        <form class="chat-compose" id="chatForm">
+          <div class="chat-compose-row">
+            <textarea id="chatInput" rows="4" placeholder="Ask about the yield estimate, crop signals, weather, or what the model is seeing..."></textarea>
+          </div>
+          <label class="field chat-model-field">
+            <span>Model</span>
+            <select id="chatModelSelect"></select>
+          </label>
+          <div class="chat-statusline" id="chatStatusLine">Enter sends. Ctrl+Enter inserts a new line. Connects to Ollama on localhost:11434.</div>
+        </form>
+      </div>
+    </aside>
   </body>
 </html>

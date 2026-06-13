@@ -3,6 +3,15 @@ const state = {
   latestResult: null,
   activeTab: "overview",
   activeGroup: null,
+  chat: {
+    open: false,
+    models: [],
+    selectedModel: "",
+    modelInfo: null,
+    messages: [],
+    loading: false,
+    error: "",
+  },
 };
 
 const el = (selector) => document.querySelector(selector);
@@ -22,6 +31,241 @@ function formatPercent(value) {
     return "Not available";
   }
   return `${Number(value).toFixed(1)}%`;
+}
+
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.max(1, Math.ceil(text.trim().split(/\s+/).filter(Boolean).length * 1.3));
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function buildChatContextSnapshot(result) {
+  if (!result) return {};
+  return {
+    headline: result.headline || {},
+    summary: {
+      best_model: result.summary?.best_model || {},
+      holdout: result.summary?.holdout || {},
+    },
+    drivers: (result.drivers || []).slice(0, 3),
+    feature_groups: (result.feature_groups || []).map((group) => ({
+      group: group.group,
+      label: group.label,
+      features: (group.features || []).slice(0, 2).map((feature) => ({
+        label: feature.label,
+        description: feature.description,
+        latest_value: feature.latest_value,
+        recent: (feature.series || []).slice(-3).map((item) => item.value),
+      })),
+    })),
+    yield_series: (result.yield_series || []).slice(-6).map((item) => ({
+      month_label: item.month_label,
+      predicted_yield: item.predicted_yield,
+    })),
+    monthly_features: (result.monthly_features || []).slice(-4).map((item) => ({
+      month_label: item.month_label,
+      predicted_yield: item.predicted_yield,
+    })),
+    feature_importance: (result.feature_importance || []).slice(0, 5).map((item) => ({
+      label: item.label,
+      importance: item.importance,
+    })),
+  };
+}
+
+function renderChatContext() {
+  const target = el("#chatContextSummary");
+  if (!target) return;
+  const headlineMonth = state.latestResult?.headline?.month_label
+    || (state.latestResult?.headline?.year && state.latestResult?.headline?.month
+      ? `${state.latestResult.headline.year}-${String(state.latestResult.headline.month).padStart(2, "0")}`
+      : null);
+  const headline = headlineMonth || "No prediction run yet";
+  const topDriver = state.latestResult?.drivers?.[0]?.label || "Not available";
+  const rows = [
+    `Latest run: ${headline}`,
+    `Top driver: ${topDriver}`,
+    `Monthly rows: ${(state.latestResult?.monthly_features || []).length}`,
+  ];
+  target.innerHTML = rows.map((item) => `<div>${item}</div>`).join("");
+}
+
+function renderChatMessages() {
+  const target = el("#chatMessages");
+  if (!target) return;
+  const messages = state.chat.messages.length
+    ? state.chat.messages
+    : [
+        {
+          role: "system",
+          content: "Ask about the current yield estimate, crop drivers, weather patterns, or what the model is seeing.",
+        },
+      ];
+  target.innerHTML = messages
+    .map(
+      (message) => `
+        <div class="chat-message ${message.role}">
+          <div class="chat-role">${escapeHtml(message.role === "assistant" ? "TaoCrop" : message.role === "system" ? "System" : "You")}</div>
+          <div class="chat-content">${escapeHtml(message.content)}</div>
+        </div>
+      `,
+    )
+    .join("");
+  target.scrollTop = target.scrollHeight;
+}
+
+function updateChatControls() {
+  const input = el("#chatInput");
+  const select = el("#chatModelSelect");
+  if (input) input.disabled = state.chat.loading;
+  if (select) select.disabled = state.chat.loading;
+}
+
+function renderChatStatusLine() {
+  const target = el("#chatStatusLine");
+  if (!target) return;
+  const info = state.chat.modelInfo || {};
+  const contextLength = info.context_length || "Not reported";
+  const lastStats = state.chat.lastStats || {};
+  const currentTokens = lastStats.input_tokens ?? estimateTokens(JSON.stringify(buildChatContextSnapshot(state.latestResult)));
+  const tokensPerSecond = lastStats.tokens_per_second;
+  target.innerHTML = `
+    <strong>${state.chat.selectedModel || "Select a model"}</strong>
+    <span>Context ${contextLength}</span>
+    <span>Current ${currentTokens} tokens</span>
+    <span>${tokensPerSecond && Number.isFinite(tokensPerSecond) ? `${tokensPerSecond.toFixed(1)} tok/s` : "tok/s after reply"}</span>
+    <span>Enter sends</span>
+    <span>Ctrl+Enter newline</span>
+  `;
+}
+
+function setChatOpen(open) {
+  state.chat.open = open;
+  document.body.classList.toggle("chat-open", open);
+  el("#chatBackdrop").classList.toggle("hidden", !open);
+  el("#chatPanel").classList.toggle("hidden", !open);
+  if (open) {
+    renderChatContext();
+    renderChatMessages();
+    renderChatStatusLine();
+    setTimeout(() => el("#chatInput").focus(), 0);
+  }
+}
+
+async function loadChatModels() {
+  const response = await fetch("/api/chat/models");
+  if (!response.ok) {
+    throw new Error("Could not load Ollama models");
+  }
+  const payload = await response.json();
+  state.chat.models = payload.models || [];
+  const select = el("#chatModelSelect");
+  if (!state.chat.models.length) {
+    select.innerHTML = `<option value="">No Ollama models found</option>`;
+    state.chat.selectedModel = "";
+    state.chat.modelInfo = null;
+    updateChatControls();
+    renderChatStatusLine();
+    return;
+  }
+  select.innerHTML = state.chat.models
+    .map((model) => {
+      const name = model.model || model.name;
+      return `<option value="${name}">${name}</option>`;
+    })
+    .join("");
+  if (!state.chat.selectedModel) {
+    state.chat.selectedModel = state.chat.models[0].model || state.chat.models[0].name;
+  }
+  select.value = state.chat.selectedModel;
+  if (state.chat.selectedModel) {
+    await syncChatModelInfo(state.chat.selectedModel);
+  }
+}
+
+async function syncChatModelInfo(model) {
+  const response = await fetch(`/api/chat/models/${encodeURIComponent(model)}`);
+  if (!response.ok) {
+    throw new Error("Could not load model details");
+  }
+  state.chat.modelInfo = await response.json();
+  updateChatControls();
+  renderChatStatusLine();
+}
+
+function buildChatMessages() {
+  return state.chat.messages.map((message) => ({ role: message.role, content: message.content }));
+}
+
+async function submitChat(event) {
+  event.preventDefault();
+  const input = el("#chatInput");
+  const text = input.value.trim();
+  if (!text || state.chat.loading) return;
+  if (!state.chat.selectedModel) {
+    throw new Error("Select an Ollama model first.");
+  }
+
+  state.chat.messages.push({ role: "user", content: text });
+  state.chat.messages = state.chat.messages.slice(-8);
+  input.value = "";
+  state.chat.loading = true;
+  state.chat.error = "";
+  updateChatControls();
+  renderChatMessages();
+  renderChatStatusLine();
+
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: state.chat.selectedModel,
+      messages: buildChatMessages(),
+      dashboard_context: buildChatContextSnapshot(state.latestResult),
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.detail || "Chat failed");
+  }
+  const payload = await response.json();
+  state.chat.messages.push({ role: "assistant", content: payload.reply || "No response returned." });
+  state.chat.messages = state.chat.messages.slice(-8);
+  state.chat.lastStats = payload.stats || {};
+  state.chat.loading = false;
+  updateChatControls();
+  state.chat.modelInfo = {
+    ...(state.chat.modelInfo || {}),
+    context_length: payload.stats?.context_length || state.chat.modelInfo?.context_length,
+  };
+  renderChatMessages();
+  renderChatStatusLine();
+}
+
+function handleChatComposerKeydown(event) {
+  if (event.key !== "Enter") return;
+  const input = event.currentTarget;
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.setRangeText("\n", start, end, "end");
+    renderChatStatusLine();
+    return;
+  }
+  event.preventDefault();
+  const form = el("#chatForm");
+  form.requestSubmit();
 }
 
 function resolveMonthLabel(row) {
@@ -587,6 +831,8 @@ function renderResult(result) {
   renderBenchmarkTable(result);
   renderFeatureTable(result);
   renderFeatureGroups(result);
+  renderChatContext();
+  renderChatStatusLine();
   setStatus("Prediction complete", "The yield estimate, drivers, and grouped charts are ready.");
 }
 
@@ -662,12 +908,47 @@ function wireTabs() {
   });
 }
 
+function wireChat() {
+  el("#chatOpenButton").addEventListener("click", () => setChatOpen(true));
+  el("#chatBackdrop").addEventListener("click", () => setChatOpen(false));
+  el("#chatCloseButton").addEventListener("click", () => setChatOpen(false));
+  el("#chatModelSelect").addEventListener("change", (event) => {
+    state.chat.selectedModel = event.target.value;
+    syncChatModelInfo(state.chat.selectedModel).catch((error) => {
+      setStatus("Chat model error", error.message);
+    });
+    renderChatStatusLine();
+  });
+  el("#chatForm").addEventListener("submit", (event) => {
+    submitChat(event).catch((error) => {
+      state.chat.loading = false;
+      updateChatControls();
+      state.chat.error = error.message;
+      state.chat.messages.push({
+        role: "system",
+        content: `Chat error: ${error.message}`,
+      });
+      renderChatMessages();
+      renderChatStatusLine();
+    });
+  });
+  el("#chatInput").addEventListener("input", () => {
+    renderChatStatusLine();
+  });
+  el("#chatInput").addEventListener("keydown", handleChatComposerKeydown);
+}
+
 async function init() {
   const response = await fetch("/api/config");
   state.config = await response.json();
   buildHeroStats(state.config);
   setStatus("Ready", "Upload a farm folder to see the yield estimate and crop drivers.");
   wireTabs();
+  wireChat();
+  loadChatModels().catch((error) => {
+    state.chat.error = error.message;
+    renderChatStatusLine();
+  });
   el("#uploadForm").addEventListener("submit", (event) => {
     submitUpload(event).catch((error) => setStatus("Failed", error.message));
   });
