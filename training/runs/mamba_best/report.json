@@ -1,0 +1,30 @@
+{
+  "run_dir": "training/runs/mamba_best",
+  "best_model": "tiny_mamba_ssm",
+  "results": [
+    {
+      "model": "tiny_mamba_ssm",
+      "model_type": "learned",
+      "split": "test",
+      "train_loss": 0.24475795144556578,
+      "val_loss": 0.31590539718717836,
+      "physics_loss": 15.548884539491802,
+      "rmse": 2.5779033218793885,
+      "mae": 0.41386550664901733,
+      "mse": 6.645585536956787,
+      "r2": 0.9139851927757263,
+      "val_rmse": 2.509484610057945,
+      "val_mae": 0.3948487341403961,
+      "val_mse": 6.297513008117676,
+      "val_r2": 0.9180978536605835,
+      "checkpoint_path": "training/runs/mamba_best/tiny_mamba_ssm/checkpoint.pt",
+      "history_path": "training/runs/mamba_best/tiny_mamba_ssm/history.csv",
+      "loss_curve_path": "training/runs/mamba_best/tiny_mamba_ssm/loss_curve.png",
+      "physics_curve_path": "training/runs/mamba_best/tiny_mamba_ssm/physics_curve.png",
+      "predictions_path": "training/runs/mamba_best/tiny_mamba_ssm/test_predictions.csv",
+      "trainable_parameters": 94208,
+      "total_parameters": 94208,
+      "status": "trained"
+    }
+  ]
+}

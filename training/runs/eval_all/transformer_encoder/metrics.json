@@ -1,0 +1,28 @@
+{
+  "model_name": "transformer_encoder",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 2.6382399402442163,
+    "mae": 0.42232823371887207,
+    "mse": 6.960309982299805,
+    "r2": 0.9094778895378113,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 2.636494492778094,
+    "mae": 0.4223020374774933,
+    "mse": 6.951103210449219,
+    "r2": 0.9100308418273926,
+    "n_samples": 41580.0
+  },
+  "final_train_loss": 0.582604962481278,
+  "final_val_loss": 0.6121168654374401,
+  "final_physics_loss": 15.547146816446324,
+  "trainable_parameters": 172224,
+  "total_parameters": 172224,
+  "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/transformer_encoder/history.csv",
+  "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/transformer_encoder/loss_curve.png",
+  "physics_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/transformer_encoder/physics_curve.png",
+  "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/transformer_encoder/checkpoint.pt",
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/transformer_encoder/test_predictions.csv"
+}

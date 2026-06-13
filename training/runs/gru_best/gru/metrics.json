@@ -1,0 +1,28 @@
+{
+  "model_name": "gru",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 2.605278866095392,
+    "mae": 0.43367698788642883,
+    "mse": 6.787477970123291,
+    "r2": 0.911725640296936,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 2.630983073633568,
+    "mae": 0.432018518447876,
+    "mse": 6.922071933746338,
+    "r2": 0.9104065895080566,
+    "n_samples": 41580.0
+  },
+  "final_train_loss": 0.5877057249698575,
+  "final_val_loss": 0.6154585448579756,
+  "final_physics_loss": 15.555786312629879,
+  "trainable_parameters": 46080,
+  "total_parameters": 46080,
+  "history_path": "training/runs/gru_best/gru/history.csv",
+  "loss_curve_path": "training/runs/gru_best/gru/loss_curve.png",
+  "physics_curve_path": "training/runs/gru_best/gru/physics_curve.png",
+  "checkpoint_path": "training/runs/gru_best/gru/checkpoint.pt",
+  "predictions_path": "training/runs/gru_best/gru/test_predictions.csv"
+}

@@ -93,27 +93,27 @@ def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypat
         lambda *args, **kwargs: SimpleNamespace(
             forecast_by_model={
                 "lstm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 1.0}]),
-                "attention": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 2.0}]),
+                "transformer_encoder": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 2.0}]),
                 "gru": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 3.0}]),
-                "gamma_ssm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 4.0}]),
+                "tiny_mamba_ssm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 4.0}]),
             },
-            predictor_by_model={key: SimpleNamespace(model_name=key) for key in ("lstm", "attention", "gru", "gamma_ssm")},
+            predictor_by_model={key: SimpleNamespace(model_name=key) for key in ("lstm", "transformer_encoder", "gru", "tiny_mamba_ssm")},
         ),
     )
 
     result = service.predict_from_directory(tmp_path, county_id="19001", crop_type="corn")
 
-    assert set(result["feature_forecasts_by_model"]) == {"lstm", "attention", "gru", "gamma_ssm"}
-    assert result["feature_forecasts_by_model"]["gamma_ssm"][0]["month_label"] == "2022-07"
+    assert set(result["feature_forecasts_by_model"]) == {"lstm", "transformer_encoder", "gru", "tiny_mamba_ssm"}
+    assert result["feature_forecasts_by_model"]["tiny_mamba_ssm"][0]["month_label"] == "2022-07"
 
 
-def test_gamma_ssm_architecture_alias_is_supported() -> None:
+def test_tiny_mamba_ssm_architecture_is_supported() -> None:
     state_dict = {
         "blocks.0.in_proj.weight": pd.DataFrame([[0.0] * 35] * 64).to_numpy(),
         "head.2.bias": pd.Series([0.0] * 35).to_numpy(),
     }
 
-    params = infer_architecture_from_state_dict("gamma_ssm", state_dict)
+    params = infer_architecture_from_state_dict("tiny_mamba_ssm", state_dict)
 
     assert params["input_dim"] == 35
     assert params["output_dim"] == 35

@@ -15,7 +15,7 @@ from cropnet_forecasting.training_dataset import (
     prepare_training_dataset,
     prepare_training_dataset_from_download,
 )
-from cropnet_forecasting.training_engine import build_model, build_sequence_splits, train_torch_model
+from cropnet_forecasting.training_engine import build_model, build_pinn_model, build_sequence_splits, train_torch_model
 
 
 def _synthetic_monthly_frame() -> pd.DataFrame:
@@ -197,6 +197,70 @@ def test_sequence_builder_and_lstm_training(tmp_path: Path) -> None:
     )
 
     assert history
+    assert isinstance(trained, torch.nn.Module)
+
+
+def test_pinn_training_records_physics_loss(tmp_path: Path) -> None:
+    source = tmp_path / "monthly.parquet"
+    frame = _synthetic_monthly_frame()
+    frame.to_parquet(source, index=False)
+
+    prepared = prepare_training_dataset(
+        source,
+        tmp_path / "prepared_pinn",
+        train_years=[2017, 2018, 2019, 2020],
+        val_years=[2021],
+        test_years=[2022],
+        overwrite=True,
+    )
+    scaler = FeatureScaler.from_csv(prepared.scaler_path).subset(FEATURE_COLS)
+    all_frame = pd.read_parquet(prepared.all_path)
+    splits = build_sequence_splits(all_frame, FEATURE_COLS, scaler, seq_len=6, target_mode="seasonal_residual")
+
+    model = build_pinn_model(
+        "lstm",
+        len(FEATURE_COLS),
+        feature_names=FEATURE_COLS,
+        hidden_size=16,
+        num_layers=1,
+        dropout=0.0,
+        latent_state_dim=3,
+        physics_loss="combined",
+    )
+    train_loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(
+            torch.tensor(splits["train"].X_scaled, dtype=torch.float32),
+            torch.tensor(splits["train"].y_model_scaled, dtype=torch.float32),
+        ),
+        batch_size=16,
+        shuffle=True,
+    )
+    val_loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(
+            torch.tensor(splits["val"].X_scaled, dtype=torch.float32),
+            torch.tensor(splits["val"].y_model_scaled, dtype=torch.float32),
+        ),
+        batch_size=16,
+        shuffle=False,
+    )
+
+    trained, history = train_torch_model(
+        model,
+        train_loader,
+        val_loader,
+        torch.device("cpu"),
+        learning_rate=1e-3,
+        weight_decay=0.0,
+        max_epochs=1,
+        patience=1,
+        physics_weight=0.1,
+        physics_warmup_epochs=0,
+    )
+
+    assert history
+    assert "train_physics_loss" in history[0]
+    assert "val_physics_loss" in history[0]
+    assert history[0]["train_physics_loss"] >= 0.0
     assert isinstance(trained, torch.nn.Module)
 
 

@@ -1,2 +1,0 @@
-model,model_type,checkpoint_path,history_path,predictions_path,trainable_parameters,total_parameters,status
-lstm,learned,/mnt/c/users/lobakkang/github/crop-net/training/runs/aug_smoke/lstm/checkpoint.pt,/mnt/c/users/lobakkang/github/crop-net/training/runs/aug_smoke/lstm/history.csv,/mnt/c/users/lobakkang/github/crop-net/training/runs/aug_smoke/lstm/test_predictions.csv,28259,28259,trained

@@ -64,8 +64,8 @@ YIELD_MODEL_VARIANTS: dict[str, dict[str, Any]] = {
         "label": "LSTM",
         "path": YIELD_MODEL_DIR / "lstm" / "best_yield_model.joblib",
     },
-    "attention": {
-        "label": "Attention",
+    "transformer_encoder": {
+        "label": "Transformer Encoder",
         "path": YIELD_MODEL_DIR / "transformer_encoder" / "best_yield_model.joblib",
     },
     "gru": {
@@ -491,7 +491,12 @@ class YieldModelService:
             config_path=DEFAULT_FEATURE_FORECAST_CONFIG,
             progress=progress,
         )
-        future_feature_frame = feature_forecasts.forecast_by_model.get("lstm")
+        future_feature_frame = None
+        for model_key in ("tiny_mamba_ssm", "transformer_encoder", "gru", "lstm"):
+            candidate = feature_forecasts.forecast_by_model.get(model_key)
+            if candidate is not None and not candidate.empty:
+                future_feature_frame = candidate
+                break
         if future_feature_frame is None or future_feature_frame.empty:
             future_feature_frame = next(iter(feature_forecasts.forecast_by_model.values()), pd.DataFrame())
         yield_trajectory_by_model: dict[str, list[dict[str, Any]]] = {}
@@ -521,9 +526,17 @@ class YieldModelService:
         payload["feature_forecast_models"] = [
             {
                 "key": model_key,
-                "label": feature_forecasts.predictor_by_model[model_key].model_name.replace("_", " ").title()
-                if model_key in feature_forecasts.predictor_by_model
-                else model_key,
+                "label": {
+                    "lstm": "LSTM",
+                    "gru": "GRU",
+                    "transformer_encoder": "Transformer Encoder",
+                    "tiny_mamba_ssm": "Tiny Mamba SSM",
+                }.get(
+                    model_key,
+                    feature_forecasts.predictor_by_model[model_key].model_name.replace("_", " ").title()
+                    if model_key in feature_forecasts.predictor_by_model
+                    else model_key,
+                ),
             }
             for model_key in feature_forecasts.forecast_by_model.keys()
         ]

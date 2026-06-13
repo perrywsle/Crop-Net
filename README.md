@@ -115,23 +115,25 @@ python src/cropnet_forecasting/yield_batching.py merge \
   --diagnostic-path outputs/experiments/corn_ia_gs_2017_2022/artifacts/monthly_merge_diagnostic.json
 ```
 
-Train/test the direct yield baseline from ground-truth monthly features and USDA labels:
+Prepare the canonical official yield dataset:
 ```bash
-python src/cropnet_forecasting/yield_regression.py \
-  --monthly-path outputs/experiments/corn_ia_gs_2017_2022/artifacts/official_monthly_feature_table.parquet \
-  --usda-path "data/usda_labels/USDA Crop Dataset/Corn/2017/USDA_Corn_County_2017.csv" \
-    "data/usda_labels/USDA Crop Dataset/Corn/2018/USDA_Corn_County_2018.csv" \
-    "data/usda_labels/USDA Crop Dataset/Corn/2019/USDA_Corn_County_2019.csv" \
-    "data/usda_labels/USDA Crop Dataset/Corn/2020/USDA_Corn_County_2020.csv" \
-    "data/usda_labels/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv" \
-    "data/usda_labels/USDA Crop Dataset/Corn/2022/USDA_Corn_County_2022.csv" \
-  --crop-type corn \
-  --feature-group all \
-  --target-grain monthly \
-  --output-dir outputs/yield_baseline/corn_ia_2017_2022_monthly
+python prepare_yield_dataset.py \
+  --output-dir data/yield_training \
+  --source-dataset-dir data/training
 ```
 
-The monthly direct yield baseline copies each county-year USDA annual yield onto the matching monthly rows, so a model can learn to predict annual yield from any available month. It rejects blank-fill or forecast prediction tables and saves a merged monthly training frame, model benchmark, per-month benchmark, month-window benchmark, pruning report, residuals, best model artifact, and metadata JSON.
+Train the official yield models from the prepared split:
+```bash
+python feature_training.py \
+  --dataset-dir data/yield_training \
+  --output-dir training/yield_runs \
+  --run-name yield_all \
+  --models all
+```
+
+The yield prep step copies each county-year USDA annual yield onto the monthly rows already stored in `data/training`, then writes `all/train/val/test.parquet` plus `metadata.json`. The training step benchmarks Ridge, RandomForest, ExtraTrees, and the baseline predictors, writes per-model predictions and metrics, and saves the best trainable model as `best_yield_model.joblib`.
+
+The legacy direct entrypoint still exists for compatibility, but the new `prepare_yield_dataset.py` plus `feature_training.py` flow is the recommended path.
 
 For true January-only prediction, extract all quarters (`Q1 Q2 Q3 Q4`) before training; the Q2/Q3 workflow only supports April-September monthly benchmarks.
 
@@ -154,6 +156,32 @@ python prepare_dataset.py --output-dir data/training --raw-root data/raw/cropnet
 Then train a model from the prepared split:
 ```bash
 python training/train.py --dataset-dir data/training --run-name lstm_clean_run --models lstm
+```
+
+To evaluate the full model set, including baselines and non-trainable comparisons, use:
+```bash
+python training/train.py --dataset-dir data/training --run-name eval_all --models all --target-mode raw
+```
+
+The trainer supports two target modes:
+- `raw`: predict the next-month feature vector directly.
+- `seasonal_residual`: predict the deviation from last year’s same month.
+
+`raw` was the stronger default in the PINN runs because it avoids an extra seasonal lookup step and gives the optimizer a simpler target.
+
+Training plots now show the forecast loss curve directly and mark the physics-loss warmup boundary with a vertical line labeled `physics loss start here`.
+
+If you want to tune several models and hyperparameters from a JSON file, use the sweep runner:
+```bash
+python training/sweep.py --config training/sweep_example.json
+```
+
+Saved presets for the current best-known configs:
+```bash
+python training/sweep.py --config training/presets/mamba_best.json
+python training/sweep.py --config training/presets/gru_best.json
+python training/sweep.py --config training/presets/lstm_best.json
+python training/sweep.py --config training/presets/transformer_best.json
 ```
 
 ### Where weights and figures live

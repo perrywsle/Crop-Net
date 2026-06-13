@@ -57,21 +57,21 @@ MODEL_SPECS: dict[str, dict[str, str]] = {
         "label": "LSTM",
         "checkpoint": "weights/lstm_best.pt",
     },
-    "attention": {
-        "label": "Attention",
+    "transformer_encoder": {
+        "label": "Transformer Encoder",
         "checkpoint": "weights/transformer_encoder_best.pt",
     },
     "gru": {
         "label": "GRU",
         "checkpoint": "weights/gru_best.pt",
     },
-    "gamma_ssm": {
-        "label": "Gamma SSM",
+    "tiny_mamba_ssm": {
+        "label": "Tiny Mamba SSM",
         "checkpoint": "weights/tiny_mamba_ssm_best.pt",
     },
 }
 
-MODEL_ORDER: tuple[str, ...] = ("lstm", "attention", "gru", "gamma_ssm")
+MODEL_ORDER: tuple[str, ...] = ("lstm", "transformer_encoder", "gru", "tiny_mamba_ssm")
 
 
 def _infer_modality(path: Path) -> ModalityName | None:
@@ -270,7 +270,7 @@ def build_forecast_from_monthly_features(
             scaler_path,
             config_path,
             device=device,
-            model_name="transformer_encoder" if model_key == "attention" else model_key,
+            model_name=model_key,
         )
         predictor_by_model[model_key] = predictor
         if default_predictor is None:

@@ -31,7 +31,7 @@ from cropnet_forecasting.training_engine import (
     AugmentationConfig,
     LEARNED_MODELS,
     SequenceSplit,
-    build_model,
+    build_pinn_model,
     build_sequence_splits,
     ensemble_prediction,
     fit_sarima_predictions,
@@ -46,6 +46,9 @@ class ModelRunSummary:
     model: str
     model_type: str
     split: str
+    train_loss: float
+    val_loss: float
+    physics_loss: float
     rmse: float
     mae: float
     mse: float
@@ -57,6 +60,7 @@ class ModelRunSummary:
     checkpoint_path: str
     history_path: str
     loss_curve_path: str
+    physics_curve_path: str
     predictions_path: str
     trainable_parameters: int
     total_parameters: int
@@ -105,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--max-epochs", type=int, default=80)
     parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--latent-state-dim", type=int, default=3)
+    parser.add_argument("--physics-weight", type=float, default=0.1)
+    parser.add_argument("--physics-warmup-epochs", type=int, default=5)
+    parser.add_argument("--physics-loss", choices=["growth", "phenology", "water", "combined"], default="combined")
+    parser.add_argument("--physics-config", type=Path, default=ROOT / "training" / "physics_weights.json")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--overwrite", action="store_true")
@@ -132,6 +141,7 @@ def _make_run_dir(output_dir: Path, run_name: str | None, models: list[str]) -> 
 def _make_loader(split: SequenceSplit, batch_size: int, shuffle: bool) -> DataLoader:
     dataset = TensorDataset(
         torch.tensor(split.X_scaled, dtype=torch.float32),
+        torch.tensor(split.X_raw, dtype=torch.float32),
         torch.tensor(split.y_model_scaled, dtype=torch.float32),
     )
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=False)
@@ -160,17 +170,52 @@ def _save_prediction_frame(split: SequenceSplit, pred_raw: np.ndarray, feature_c
     frame.to_csv(path, index=False)
 
 
-def _save_loss_curve(history: list[dict[str, float]], path: Path) -> None:
+def _save_loss_curve(
+    history: list[dict[str, float]],
+    path: Path,
+    *,
+    train_col: str = "train_loss",
+    val_col: str = "val_loss",
+    title: str = "Training Loss Curve",
+    physics_start_epoch: int | None = None,
+    hide_before_epoch: int | None = None,
+    line_label_prefix: str = "",
+) -> None:
     if not history:
         return
     df = pd.DataFrame(history)
+    if hide_before_epoch is not None:
+        df = df[df["epoch"] > hide_before_epoch].copy()
+    if df.empty:
+        return
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(df["epoch"], df["train_loss"], label="Train Loss", linewidth=2)
-    if "val_loss" in df.columns and df["val_loss"].notna().any():
-        ax.plot(df["epoch"], df["val_loss"], label="Val Loss", linewidth=2)
+    if train_col in df.columns:
+        label = train_col.replace("_", " ").title()
+        if line_label_prefix:
+            label = f"{line_label_prefix}{label}"
+        ax.plot(df["epoch"], df[train_col], label=label, linewidth=2)
+    if val_col in df.columns and df[val_col].notna().any():
+        label = val_col.replace("_", " ").title()
+        if line_label_prefix:
+            label = f"{line_label_prefix}{label}"
+        ax.plot(df["epoch"], df[val_col], label=label, linewidth=2)
+    if physics_start_epoch is not None:
+        marker_x = physics_start_epoch + 0.5
+        ax.axvline(marker_x, color="#444444", linestyle="--", linewidth=1.5, alpha=0.8)
+        ymax = ax.get_ylim()[1]
+        ax.text(
+            marker_x + 0.15,
+            ymax * 0.95,
+            "physics loss start here",
+            rotation=90,
+            va="top",
+            ha="left",
+            fontsize=9,
+            color="#444444",
+        )
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    ax.set_title("Training Loss Curve")
+    ax.set_title(title)
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -178,14 +223,41 @@ def _save_loss_curve(history: list[dict[str, float]], path: Path) -> None:
     plt.close(fig)
 
 
+def _save_history_plots(history: list[dict[str, float]], model_dir: Path, *, physics_warmup_epochs: int) -> tuple[Path, Path]:
+    loss_curve_path = model_dir / "loss_curve.png"
+    physics_curve_path = model_dir / "physics_curve.png"
+    _save_loss_curve(
+        history,
+        loss_curve_path,
+        train_col="train_forecast_loss",
+        val_col="val_forecast_loss",
+        title="Training Forecast Loss",
+        physics_start_epoch=physics_warmup_epochs,
+    )
+    if any("train_physics_loss" in row for row in history):
+        _save_loss_curve(
+            history,
+            physics_curve_path,
+            train_col="train_physics_loss",
+            val_col="val_physics_loss",
+            title="Training Physics Loss",
+            hide_before_epoch=physics_warmup_epochs,
+            line_label_prefix="Post-warmup ",
+        )
+    return loss_curve_path, physics_curve_path
+
+
 def _print_model_report(summary: ModelRunSummary) -> None:
     print(f"Model: {summary.model}")
     print(f"  Type: {summary.model_type}")
     print(f"  Params: {summary.trainable_parameters:,} trainable / {summary.total_parameters:,} total")
+    print(f"  Train Loss: {summary.train_loss:.4f} | Val Loss: {summary.val_loss:.4f} | Physics Loss: {summary.physics_loss:.4f}")
     print(f"  Val   RMSE: {summary.val_rmse:.4f} | MAE: {summary.val_mae:.4f} | MSE: {summary.val_mse:.4f} | R2: {summary.val_r2:.4f}")
     print(f"  Test  RMSE: {summary.rmse:.4f} | MAE: {summary.mae:.4f} | MSE: {summary.mse:.4f} | R2: {summary.r2:.4f}")
     if summary.history_path:
         print(f"  Loss curve: {summary.loss_curve_path}")
+    if summary.physics_curve_path:
+        print(f"  Physics curve: {summary.physics_curve_path}")
     print(f"  Predictions: {summary.predictions_path}")
 
 
@@ -207,6 +279,11 @@ def _fit_single_model(
     device: torch.device,
     target_mode: str,
     augmentation: AugmentationConfig | None,
+    latent_state_dim: int,
+    physics_weight: float,
+    physics_warmup_epochs: int,
+    physics_loss: str,
+    physics_config: dict[str, Any],
 ) -> tuple[ModelRunSummary, dict[str, np.ndarray]]:
     model_dir = run_dir / model_name
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -216,12 +293,16 @@ def _fit_single_model(
     test_split = splits["test"]
 
     if model_name in LEARNED_MODELS:
-        model = build_model(
+        model = build_pinn_model(
             model_name,
             len(feature_cols),
+            feature_names=feature_cols,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout,
+            latent_state_dim=latent_state_dim,
+            physics_loss=physics_loss,
+            physics_config=physics_config,
         )
         train_loader = _make_loader(train_split, batch_size=batch_size, shuffle=True)
         val_loader = _make_loader(val_split, batch_size=batch_size, shuffle=False) if not val_split.empty() else None
@@ -235,6 +316,8 @@ def _fit_single_model(
             max_epochs=max_epochs,
             patience=patience,
             augmentation=augmentation,
+            physics_weight=physics_weight,
+            physics_warmup_epochs=physics_warmup_epochs,
         )
         checkpoint_path = model_dir / "checkpoint.pt"
         torch.save({"state_dict": model.state_dict(), "model_name": model_name, "feature_cols": feature_cols}, checkpoint_path)
@@ -260,8 +343,11 @@ def _fit_single_model(
         test_metrics = summarize_predictions(test_split.y_true_raw, test_pred)
         predictions_path = model_dir / "test_predictions.csv"
         _save_prediction_frame(test_split, test_pred, feature_cols, predictions_path)
-        loss_curve_path = model_dir / "loss_curve.png"
-        _save_loss_curve(history, loss_curve_path)
+        loss_curve_path, physics_curve_path = _save_history_plots(history, model_dir, physics_warmup_epochs=physics_warmup_epochs)
+        final_row = history[-1] if history else {}
+        train_loss = float(final_row.get("train_loss", float("nan")))
+        val_loss = float(final_row.get("val_loss", float("nan")))
+        physics_loss_value = float(final_row.get("val_physics_loss", float("nan")))
         save_json(
             {
                 "model_name": model_name,
@@ -271,6 +357,10 @@ def _fit_single_model(
                 "dropout": dropout,
                 "learning_rate": learning_rate,
                 "weight_decay": weight_decay,
+                "physics_weight": physics_weight,
+                "physics_warmup_epochs": physics_warmup_epochs,
+                "physics_loss": physics_loss,
+                "physics_config": physics_config,
                 "augmentation": None
                 if augmentation is None
                 else {
@@ -286,6 +376,9 @@ def _fit_single_model(
             model=model_name,
             model_type="learned",
             split="test",
+            train_loss=train_loss,
+            val_loss=val_loss,
+            physics_loss=physics_loss_value,
             rmse=test_metrics["rmse"],
             mae=test_metrics["mae"],
             mse=test_metrics["mse"],
@@ -297,6 +390,7 @@ def _fit_single_model(
             checkpoint_path=str(checkpoint_path),
             history_path=str(history_path),
             loss_curve_path=str(loss_curve_path),
+            physics_curve_path=str(physics_curve_path),
             predictions_path=str(predictions_path),
             trainable_parameters=int(sum(param.numel() for param in model.parameters() if param.requires_grad)),
             total_parameters=int(sum(param.numel() for param in model.parameters())),
@@ -308,10 +402,14 @@ def _fit_single_model(
                 "model_type": "learned",
                 "train_metrics": val_metrics,
                 "test_metrics": test_metrics,
+                "final_train_loss": train_loss,
+                "final_val_loss": val_loss,
+                "final_physics_loss": physics_loss_value,
                 "trainable_parameters": summary.trainable_parameters,
                 "total_parameters": summary.total_parameters,
                 "history_path": str(history_path),
                 "loss_curve_path": str(loss_curve_path),
+                "physics_curve_path": str(physics_curve_path),
                 "checkpoint_path": str(checkpoint_path),
                 "predictions_path": str(predictions_path),
             },
@@ -335,6 +433,9 @@ def _fit_single_model(
             model=model_name,
             model_type="baseline",
             split="test",
+            train_loss=float("nan"),
+            val_loss=float("nan"),
+            physics_loss=float("nan"),
             rmse=test_metrics["rmse"],
             mae=test_metrics["mae"],
             mse=test_metrics["mse"],
@@ -346,6 +447,7 @@ def _fit_single_model(
             checkpoint_path="",
             history_path="",
             loss_curve_path="",
+            physics_curve_path="",
             predictions_path=str(predictions_path),
             trainable_parameters=0,
             total_parameters=0,
@@ -357,6 +459,9 @@ def _fit_single_model(
                 "model_type": "baseline",
                 "train_metrics": val_metrics,
                 "test_metrics": test_metrics,
+                "final_train_loss": None,
+                "final_val_loss": None,
+                "final_physics_loss": None,
                 "trainable_parameters": 0,
                 "total_parameters": 0,
                 "predictions_path": str(predictions_path),
@@ -412,6 +517,9 @@ def _evaluate_sarima(
         model="sarima",
         model_type="baseline",
         split="test",
+        train_loss=float("nan"),
+        val_loss=float("nan"),
+        physics_loss=float("nan"),
         rmse=test_metrics["rmse"],
         mae=test_metrics["mae"],
         mse=test_metrics["mse"],
@@ -423,6 +531,7 @@ def _evaluate_sarima(
         checkpoint_path="",
         history_path="",
         loss_curve_path="",
+        physics_curve_path="",
         predictions_path=str(predictions_path),
         trainable_parameters=0,
         total_parameters=0,
@@ -483,6 +592,11 @@ def main() -> int:
             "dropout": args.dropout,
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
+            "latent_state_dim": args.latent_state_dim,
+            "physics_weight": args.physics_weight,
+            "physics_warmup_epochs": args.physics_warmup_epochs,
+            "physics_loss": args.physics_loss,
+            "physics_config_path": str(args.physics_config),
             "augmentation": {
                 "input_noise_std": augmentation.input_noise_std,
                 "feature_mask_prob": augmentation.feature_mask_prob,
@@ -498,6 +612,7 @@ def main() -> int:
 
     # Keep the scaler alongside the run for downstream inference.
     pd.read_csv(args.dataset_dir / "scaler.csv").to_csv(run_dir / "scaler.csv", index=False)
+    physics_config = json.loads(args.physics_config.read_text(encoding="utf-8")) if args.physics_config.exists() else {}
 
     results: list[ModelRunSummary] = []
     learned_predictions: dict[str, dict[str, np.ndarray]] = {"val": {}, "test": {}}
@@ -522,6 +637,11 @@ def main() -> int:
                 device=device,
                 target_mode=args.target_mode,
                 augmentation=augmentation if model_name in LEARNED_MODELS else None,
+                latent_state_dim=args.latent_state_dim,
+                physics_weight=args.physics_weight,
+                physics_warmup_epochs=args.physics_warmup_epochs,
+                physics_loss=args.physics_loss,
+                physics_config=physics_config,
             )
             results.append(summary)
             learned_predictions["val"][model_name] = preds["val"]
@@ -575,6 +695,9 @@ def main() -> int:
                     model=ensemble_name,
                     model_type="ensemble",
                     split="test",
+                    train_loss=float("nan"),
+                    val_loss=float("nan"),
+                    physics_loss=float("nan"),
                     rmse=metrics["rmse"],
                     mae=metrics["mae"],
                     mse=metrics["mse"],
@@ -586,6 +709,7 @@ def main() -> int:
                     checkpoint_path="",
                     history_path="",
                     loss_curve_path="",
+                    physics_curve_path="",
                     predictions_path=str(predictions_path),
                     trainable_parameters=0,
                     total_parameters=0,

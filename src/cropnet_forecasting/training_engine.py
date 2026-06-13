@@ -18,6 +18,7 @@ from statsmodels.tools.sm_exceptions import ConvergenceWarning
 from .features import META_COLS
 from .models import CropNetModelFactory
 from .scaling import FeatureScaler
+from .pinn import PINNForecaster
 
 LEARNED_MODELS = ("lstm", "gru", "transformer_encoder", "tiny_mamba_ssm")
 BASELINE_MODELS = ("naive_lag1", "seasonal_last_year")
@@ -28,6 +29,7 @@ ALL_SUPPORTED_MODELS = LEARNED_MODELS + BASELINE_MODELS + EVAL_ONLY_MODELS
 @dataclass(slots=True)
 class SequenceSplit:
     X_scaled: np.ndarray
+    X_raw: np.ndarray
     y_model_scaled: np.ndarray
     y_true_raw: np.ndarray
     seasonal_base_scaled: np.ndarray
@@ -94,7 +96,8 @@ def build_sequence_splits(
     seasonal_lookup_raw = _build_seasonal_lookup(working_raw, feature_cols)
     seasonal_lookup_scaled = _build_seasonal_lookup(working_scaled, feature_cols)
 
-    buckets: dict[str, list[np.ndarray]] = {key: [] for key in ("train", "val", "test")}
+    buckets_scaled: dict[str, list[np.ndarray]] = {key: [] for key in ("train", "val", "test")}
+    buckets_raw: dict[str, list[np.ndarray]] = {key: [] for key in ("train", "val", "test")}
     targets: dict[str, list[np.ndarray]] = {key: [] for key in ("train", "val", "test")}
     truths: dict[str, list[np.ndarray]] = {key: [] for key in ("train", "val", "test")}
     seasonal_scaled: dict[str, list[np.ndarray]] = {key: [] for key in ("train", "val", "test")}
@@ -118,7 +121,7 @@ def build_sequence_splits(
         for i in range(seq_len, len(group_raw)):
             target_row = group_raw.iloc[i]
             split = str(target_row["split"])
-            if split not in buckets:
+            if split not in buckets_scaled:
                 continue
             if not np.isfinite(raw_values[i]).all() or not np.isfinite(scaled_values[i]).all():
                 continue
@@ -138,14 +141,17 @@ def build_sequence_splits(
             seasonal_base_raw = seasonal_lookup_raw.get(seasonal_key)
             seasonal_base_scaled = seasonal_lookup_scaled.get(seasonal_key)
 
-            if target_mode == "seasonal_residual" and (
-                seasonal_base_raw is None or seasonal_base_scaled is None
-            ):
-                continue
-            if not np.isfinite(seasonal_base_raw).all() or not np.isfinite(seasonal_base_scaled).all():
-                continue
+            if target_mode == "seasonal_residual":
+                if seasonal_base_raw is None or seasonal_base_scaled is None:
+                    continue
+                if not np.isfinite(seasonal_base_raw).all() or not np.isfinite(seasonal_base_scaled).all():
+                    continue
+            else:
+                seasonal_base_raw = np.zeros(len(feature_cols), dtype=np.float32)
+                seasonal_base_scaled = np.zeros(len(feature_cols), dtype=np.float32)
 
-            buckets[split].append(scaled_values[i - seq_len : i])
+            buckets_scaled[split].append(scaled_values[i - seq_len : i])
+            buckets_raw[split].append(raw_values[i - seq_len : i])
             targets[split].append(
                 scaled_target if target_mode == "raw" else (scaled_target - seasonal_base_scaled)
             )
@@ -169,9 +175,10 @@ def build_sequence_splits(
 
     result: dict[str, SequenceSplit] = {}
     for split in ("train", "val", "test"):
-        if not buckets[split]:
+        if not buckets_scaled[split]:
             result[split] = SequenceSplit(
                 X_scaled=np.empty((0, seq_len, len(feature_cols)), dtype=np.float32),
+                X_raw=np.empty((0, seq_len, len(feature_cols)), dtype=np.float32),
                 y_model_scaled=np.empty((0, len(feature_cols)), dtype=np.float32),
                 y_true_raw=np.empty((0, len(feature_cols)), dtype=np.float32),
                 seasonal_base_scaled=np.empty((0, len(feature_cols)), dtype=np.float32),
@@ -180,7 +187,8 @@ def build_sequence_splits(
             )
             continue
         result[split] = SequenceSplit(
-            X_scaled=np.stack(buckets[split]).astype(np.float32),
+            X_scaled=np.stack(buckets_scaled[split]).astype(np.float32),
+            X_raw=np.stack(buckets_raw[split]).astype(np.float32),
             y_model_scaled=np.stack(targets[split]).astype(np.float32),
             y_true_raw=np.stack(truths[split]).astype(np.float32),
             seasonal_base_scaled=np.stack(seasonal_scaled[split]).astype(np.float32),
@@ -216,24 +224,75 @@ def _augment_batch(xb: torch.Tensor, config: AugmentationConfig | None) -> torch
     return out
 
 
-def evaluate_torch_model(model: nn.Module, loader: DataLoader, device: torch.device, loss_fn) -> float:
+def _build_batch_features(split: SequenceSplit) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return (
+        torch.tensor(split.X_scaled, dtype=torch.float32),
+        torch.tensor(split.X_raw, dtype=torch.float32),
+        torch.tensor(split.y_model_scaled, dtype=torch.float32),
+    )
+
+
+def _normalize_batch(batch):
+    if len(batch) == 3:
+        return batch
+    if len(batch) == 2:
+        xb, yb = batch
+        return xb, xb, yb
+    raise ValueError("Unexpected batch structure for CropNet training.")
+
+
+def _forward_model(model: nn.Module, xb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+    if hasattr(model, "forward_with_latents"):
+        pred, latent = model.forward_with_latents(xb)
+        return pred, latent
+    return model(xb), None
+
+
+def evaluate_torch_model(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    loss_fn,
+    *,
+    physics_weight: float = 0.0,
+    physics_active: bool = False,
+) -> dict[str, float]:
     model.eval()
     if loader is None or len(loader.dataset) == 0:
-        return float("nan")
-    losses = []
+        return {"forecast_loss": float("nan"), "physics_loss": float("nan"), "total_loss": float("nan")}
+    forecast_losses = []
+    physics_losses = []
+    total_losses = []
     with torch.no_grad():
-        for xb, yb in loader:
-            xb, yb = xb.to(device), yb.to(device)
-            pred = model(xb)
-            losses.append(loss_fn(pred, yb).item() * len(xb))
-    return float(np.sum(losses) / len(loader.dataset))
+        for batch in loader:
+            xb, xraw, yb = _normalize_batch(batch)
+            xb, xraw, yb = xb.to(device), xraw.to(device), yb.to(device)
+            pred, latent = _forward_model(model, xb)
+            forecast_loss = loss_fn(pred, yb)
+            physics_loss = torch.tensor(0.0, device=device)
+            if physics_active:
+                physics_module = getattr(model, "physics", None)
+                if physics_module is None or latent is None:
+                    raise ValueError("Physics mode requires a model with forward_with_latents() and physics module.")
+                physics_loss = physics_module(xraw, latent)["total"]
+            total_loss = forecast_loss + physics_weight * physics_loss
+            forecast_losses.append(forecast_loss.item() * len(xb))
+            physics_losses.append(physics_loss.item() * len(xb))
+            total_losses.append(total_loss.item() * len(xb))
+    denom = len(loader.dataset)
+    return {
+        "forecast_loss": float(np.sum(forecast_losses) / denom),
+        "physics_loss": float(np.sum(physics_losses) / denom),
+        "total_loss": float(np.sum(total_losses) / denom),
+    }
 
 
 def predict_torch_model(model: nn.Module, loader: DataLoader, device: torch.device) -> np.ndarray:
     model.eval()
     preds = []
     with torch.no_grad():
-        for xb, _ in loader:
+        for batch in loader:
+            xb, _, _ = _normalize_batch(batch)
             xb = xb.to(device)
             preds.append(model(xb).cpu().numpy())
     if not preds:
@@ -253,6 +312,8 @@ def train_torch_model(
     patience: int,
     loss_weights: torch.Tensor | None = None,
     augmentation: AugmentationConfig | None = None,
+    physics_weight: float = 0.0,
+    physics_warmup_epochs: int = 0,
 ) -> tuple[nn.Module, list[dict[str, float]]]:
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -268,27 +329,66 @@ def train_torch_model(
     best_val = float("inf")
     best_state: dict[str, torch.Tensor] | None = None
     patience_left = patience
+    physics_active = hasattr(model, "physics") and hasattr(model, "forward_with_latents")
 
     for epoch in range(1, max_epochs + 1):
         model.train()
+        train_forecast_total = 0.0
+        train_physics_total = 0.0
         train_total = 0.0
         train_count = 0
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
+        effective_physics_weight = physics_weight if epoch > physics_warmup_epochs else 0.0
+        for batch in train_loader:
+            xb, xraw, yb = _normalize_batch(batch)
+            xb, xraw, yb = xb.to(device), xraw.to(device), yb.to(device)
             xb = _augment_batch(xb, augmentation)
             optimizer.zero_grad(set_to_none=True)
-            pred = model(xb)
-            loss = loss_fn(pred, yb)
+            pred, latent = _forward_model(model, xb)
+            forecast_loss = loss_fn(pred, yb)
+            physics_loss = torch.tensor(0.0, device=device)
+            if physics_active:
+                physics_module = getattr(model, "physics", None)
+                if physics_module is None or latent is None:
+                    raise ValueError("Physics mode requires a model with forward_with_latents() and physics module.")
+                physics_loss = physics_module(xraw, latent)["total"]
+            loss = forecast_loss + effective_physics_weight * physics_loss
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            train_forecast_total += forecast_loss.item() * len(xb)
+            train_physics_total += physics_loss.item() * len(xb)
             train_total += loss.item() * len(xb)
             train_count += len(xb)
 
+        train_forecast_loss = float(train_forecast_total / max(train_count, 1))
+        train_physics_loss = float(train_physics_total / max(train_count, 1))
         train_loss = float(train_total / max(train_count, 1))
-        val_loss = evaluate_torch_model(model, val_loader, device, loss_fn) if val_loader is not None else train_loss
+        val_losses = (
+            evaluate_torch_model(
+                model,
+                val_loader,
+                device,
+                loss_fn,
+                physics_weight=effective_physics_weight,
+                physics_active=physics_active,
+            )
+            if val_loader is not None
+            else {"forecast_loss": train_forecast_loss, "physics_loss": train_physics_loss, "total_loss": train_loss}
+        )
+        val_loss = val_losses["total_loss"]
         current_lr = float(optimizer.param_groups[0]["lr"])
-        history.append({"epoch": float(epoch), "train_loss": train_loss, "val_loss": val_loss, "lr": current_lr})
+        history.append(
+            {
+                "epoch": float(epoch),
+                "train_loss": train_loss,
+                "train_forecast_loss": train_forecast_loss,
+                "train_physics_loss": train_physics_loss,
+                "val_loss": val_loss,
+                "val_forecast_loss": val_losses["forecast_loss"],
+                "val_physics_loss": val_losses["physics_loss"],
+                "lr": current_lr,
+            }
+        )
         scheduler.step(val_loss if np.isfinite(val_loss) else train_loss)
 
         if val_loss < best_val - 1e-7:
@@ -326,6 +426,7 @@ def predict_final_raw(
     loader = DataLoader(
         TensorDataset(
             torch.tensor(split.X_scaled, dtype=torch.float32),
+            torch.tensor(split.X_raw, dtype=torch.float32),
             torch.tensor(split.y_model_scaled, dtype=torch.float32),
         ),
         batch_size=128,
@@ -362,6 +463,37 @@ def build_model(model_name: str, feature_count: int, *, hidden_size: int, num_la
         hidden_size=hidden_size,
         num_layers=num_layers,
         dropout=dropout,
+    )
+
+
+def build_pinn_model(
+    model_name: str,
+    feature_count: int,
+    *,
+    feature_names: list[str],
+    hidden_size: int,
+    num_layers: int,
+    dropout: float,
+    latent_state_dim: int = 3,
+    physics_loss: str = "combined",
+    physics_config: dict[str, Any] | str | Path | None = None,
+) -> nn.Module:
+    backbone = CropNetModelFactory.create(
+        model_name=model_name,
+        input_dim=feature_count,
+        output_dim=feature_count,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+    )
+    return PINNForecaster(
+        backbone,
+        feature_names,
+        input_dim=feature_count,
+        latent_state_dim=latent_state_dim,
+        dropout=dropout,
+        physics_loss=physics_loss,
+        physics_config=physics_config,
     )
 
 

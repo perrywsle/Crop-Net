@@ -47,32 +47,33 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
-const MODEL_ORDER = ["lstm", "attention", "gru", "gamma_ssm"];
+const MODEL_ORDER = ["lstm", "transformer_encoder", "gru", "tiny_mamba_ssm"];
 const MODEL_LABELS = {
   lstm: "LSTM",
-  attention: "Attention",
+  transformer_encoder: "Transformer Encoder",
   gru: "GRU",
-  gamma_ssm: "Gamma SSM",
+  tiny_mamba_ssm: "Tiny Mamba SSM",
 };
 const MODEL_COLORS = {
   lstm: "#2d6cdf",
-  attention: "#2f7d57",
+  transformer_encoder: "#2f7d57",
   gru: "#d14b4b",
-  gamma_ssm: "#7c4fd4",
+  tiny_mamba_ssm: "#7c4fd4",
 };
 const MODEL_STYLES = {
   lstm: { stroke: "#2d6cdf", fill: "#2d6cdf", line: "-", marker: "o" },
-  attention: { stroke: "#2f7d57", fill: "#2f7d57", line: "--", marker: "D" },
+  transformer_encoder: { stroke: "#2f7d57", fill: "#2f7d57", line: "--", marker: "D" },
   gru: { stroke: "#d14b4b", fill: "#d14b4b", line: ":", marker: "s" },
-  gamma_ssm: { stroke: "#7c4fd4", fill: "#7c4fd4", line: "-.", marker: "^" },
+  tiny_mamba_ssm: { stroke: "#7c4fd4", fill: "#7c4fd4", line: "-.", marker: "^" },
 };
 const YIELD_MODEL_ORDER = [
   "current",
   "naive_lag1",
   "seasonal_last_year",
   "lstm",
-  "attention",
+  "transformer_encoder",
   "gru",
+  "tiny_mamba_ssm",
   "ensemble_mean",
   "ensemble_weighted",
 ];
@@ -81,8 +82,9 @@ const YIELD_MODEL_LABELS = {
   naive_lag1: "Naive lag-1",
   seasonal_last_year: "Seasonal last year",
   lstm: "LSTM",
-  attention: "Attention",
+  transformer_encoder: "Transformer Encoder",
   gru: "GRU",
+  tiny_mamba_ssm: "Tiny Mamba SSM",
   ensemble_mean: "Ensemble mean",
   ensemble_weighted: "Ensemble weighted",
 };
@@ -91,8 +93,9 @@ const YIELD_MODEL_COLORS = {
   naive_lag1: "#2d6cdf",
   seasonal_last_year: "#2f7d57",
   lstm: "#7c4fd4",
-  attention: "#0f766e",
+  transformer_encoder: "#0f766e",
   gru: "#d14b4b",
+  tiny_mamba_ssm: "#8b5cf6",
   ensemble_mean: "#64748b",
   ensemble_weighted: "#8b5e34",
 };
@@ -101,8 +104,9 @@ const YIELD_MODEL_STYLES = {
   naive_lag1: { stroke: "#2d6cdf", line: "--" },
   seasonal_last_year: { stroke: "#2f7d57", line: ":" },
   lstm: { stroke: "#7c4fd4", line: "-." },
-  attention: { stroke: "#0f766e", line: "--" },
+  transformer_encoder: { stroke: "#0f766e", line: "--" },
   gru: { stroke: "#d14b4b", line: ":" },
+  tiny_mamba_ssm: { stroke: "#8b5cf6", line: "-." },
   ensemble_mean: { stroke: "#64748b", line: "-." },
   ensemble_weighted: { stroke: "#8b5e34", line: "--" },
 };
@@ -1075,7 +1079,7 @@ function renderCharts(result) {
     displayYieldModels,
     {
       id: "trajectoryChart",
-      modelOrder: ["naive_lag1", "seasonal_last_year", "lstm", "attention", "gru", "ensemble_mean", "ensemble_weighted"],
+      modelOrder: ["naive_lag1", "seasonal_last_year", "lstm", "transformer_encoder", "gru", "tiny_mamba_ssm", "ensemble_mean", "ensemble_weighted"],
       modelLabels: YIELD_MODEL_LABELS,
       modelColors: YIELD_MODEL_COLORS,
       modelStyles: YIELD_MODEL_STYLES,

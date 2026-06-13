@@ -48,30 +48,39 @@ class LSTMForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0) -> None:
         _require_torch()
         super().__init__()
+        self.hidden_size = hidden_size
         lstm_dropout = dropout if num_layers > 1 else 0.0
         self.lstm = nn.LSTM(input_dim, hidden_size, num_layers=num_layers, batch_first=True, dropout=lstm_dropout)
         self.head = nn.Sequential(nn.LayerNorm(hidden_size), nn.Dropout(dropout), nn.Linear(hidden_size, output_dim))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.lstm(x)
-        return self.head(output[:, -1, :])
+        return output
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.encode(x)[:, -1, :])
 
 class GRUForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0) -> None:
         _require_torch()
         super().__init__()
+        self.hidden_size = hidden_size
         gru_dropout = dropout if num_layers > 1 else 0.0
         self.gru = nn.GRU(input_dim, hidden_size, num_layers=num_layers, batch_first=True, dropout=gru_dropout)
         self.head = nn.Sequential(nn.LayerNorm(hidden_size), nn.Dropout(dropout), nn.Linear(hidden_size, output_dim))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.gru(x)
-        return self.head(output[:, -1, :])
+        return output
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.encode(x)[:, -1, :])
 
 class TransformerEncoderForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0, max_seq_len: int = 512) -> None:
         _require_torch()
         super().__init__()
+        self.hidden_size = hidden_size
         self.input_proj = nn.Linear(input_dim, hidden_size)
         self.positional = nn.Parameter(torch.zeros(1, max_seq_len, hidden_size))
         layer = nn.TransformerEncoderLayer(
@@ -85,11 +94,13 @@ class TransformerEncoderForecaster(nn.Module):
         self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
         self.head = nn.Sequential(nn.LayerNorm(hidden_size), nn.Dropout(dropout), nn.Linear(hidden_size, output_dim))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
         seq_len = x.size(1)
         hidden = self.input_proj(x) + self.positional[:, :seq_len, :]
-        encoded = self.encoder(hidden)
-        return self.head(encoded[:, -1, :])
+        return self.encoder(hidden)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.encode(x)[:, -1, :])
 
 class TinyMambaBlock(nn.Module):
     def __init__(self, d_model: int, d_state: int = 32, conv_kernel: int = 3) -> None:
@@ -135,17 +146,20 @@ class MambaStyleForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, d_model: int = 64, d_state: int = 32, num_layers: int = 1, dropout: float = 0.0) -> None:
         _require_torch()
         super().__init__()
+        self.hidden_size = d_model
         self.input_proj = nn.Linear(input_dim, d_model)
         self.blocks = nn.ModuleList([TinyMambaBlock(d_model=d_model, d_state=d_state) for _ in range(max(1, num_layers))])
         self.dropout = nn.Dropout(dropout)
         self.head = nn.Sequential(nn.LayerNorm(d_model), nn.Dropout(dropout), nn.Linear(d_model, output_dim))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
         h = self.input_proj(x)
         for block in self.blocks:
             h = block(h)
-        h = self.dropout(h)
-        return self.head(h[:, -1, :])
+        return self.dropout(h)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.encode(x)[:, -1, :])
 
 def infer_architecture_from_state_dict(model_name: str, state_dict: dict[str, Any]) -> dict[str, int | float]:
     normalized_name = "tiny_mamba_ssm" if model_name == "gamma_ssm" else model_name

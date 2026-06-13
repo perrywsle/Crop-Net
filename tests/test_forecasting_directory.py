@@ -232,7 +232,7 @@ def test_build_forecast_from_directory_runs_all_four_models(tmp_path: Path, monk
         horizon=3,
     )
 
-    assert set(result.forecast_by_model) == {"lstm", "attention", "gru", "gamma_ssm"}
+    assert set(result.forecast_by_model) == {"lstm", "transformer_encoder", "gru", "tiny_mamba_ssm"}
     assert result.predictor.model_name == "lstm"
     assert len(result.forecast) == 3
 

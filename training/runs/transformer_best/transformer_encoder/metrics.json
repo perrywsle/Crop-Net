@@ -1,0 +1,28 @@
+{
+  "model_name": "transformer_encoder",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 2.8069656173290896,
+    "mae": 0.45541396737098694,
+    "mse": 7.879055976867676,
+    "r2": 0.897529125213623,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 2.6909596552948467,
+    "mae": 0.43775469064712524,
+    "mse": 7.2412638664245605,
+    "r2": 0.9062752723693848,
+    "n_samples": 41580.0
+  },
+  "final_train_loss": 0.5801072131847751,
+  "final_val_loss": 0.6151288254092439,
+  "final_physics_loss": 15.546748029663908,
+  "trainable_parameters": 172224,
+  "total_parameters": 172224,
+  "history_path": "training/runs/transformer_best/transformer_encoder/history.csv",
+  "loss_curve_path": "training/runs/transformer_best/transformer_encoder/loss_curve.png",
+  "physics_curve_path": "training/runs/transformer_best/transformer_encoder/physics_curve.png",
+  "checkpoint_path": "training/runs/transformer_best/transformer_encoder/checkpoint.pt",
+  "predictions_path": "training/runs/transformer_best/transformer_encoder/test_predictions.csv"
+}
