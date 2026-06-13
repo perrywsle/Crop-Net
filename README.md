@@ -145,9 +145,15 @@ python convert_data.py --source data/sample_data --output test_data
 python list_county.py --years 2017 2018 2019 2020 2021 2022
 ```
 
-### Training wrapper example
+### New training workflow
+Prepare a canonical split once:
 ```bash
-python examples/train_example.py --config configs/residual_lstm_all.yaml --mode fit
+python prepare_dataset.py --output-dir data/training --raw-root data/raw/cropnet --crop-type corn --state-codes IA --years 2017 2018 2019 2020 2021 2022 --train-years 2017 2018 2019 2020 --val-years 2021 --test-years 2022
+```
+
+Then train a model from the prepared split:
+```bash
+python training/train.py --dataset-dir data/training --run-name lstm_clean_run --models lstm
 ```
 
 ### Where weights and figures live

@@ -1,0 +1,24 @@
+{
+  "model_name": "transformer_encoder",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 4.752116283997662,
+    "mae": 0.4464561939239502,
+    "mse": 22.582609176635742,
+    "r2": 0.7063025236129761,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 3.422058797281008,
+    "mae": 0.5212218761444092,
+    "mse": 11.71048641204834,
+    "r2": 0.8484294414520264,
+    "n_samples": 41580.0
+  },
+  "trainable_parameters": 87459,
+  "total_parameters": 87459,
+  "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models_aug/transformer_encoder/history.csv",
+  "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models_aug/transformer_encoder/loss_curve.png",
+  "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models_aug/transformer_encoder/checkpoint.pt",
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models_aug/transformer_encoder/test_predictions.csv"
+}

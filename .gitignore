@@ -68,3 +68,4 @@ id_ed25519
 !weights/feature_contract_diagnostic.json
 /data/cache
 .vscode/settings.json
+/data/raw

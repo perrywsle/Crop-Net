@@ -20,7 +20,7 @@ class FeatureScaler:
             raise ValueError(f"Scaler csv must contain columns {sorted(required)}")
         return cls(
             feature_names=frame["feature"].astype(str).tolist(),
-            means=frame["mean"].to_numpy(dtype=float),
+            means=frame["mean"].fillna(0.0).to_numpy(dtype=float),
             stds=frame["std"].replace(0, 1.0).fillna(1.0).to_numpy(dtype=float),
         )
 

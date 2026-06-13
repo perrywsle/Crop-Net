@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -19,6 +20,29 @@ def _require_torch() -> None:
             "Torch is required for CropNet learned forecasting models. "
             "Install project requirements before loading checkpoints."
         )
+
+
+def _legacy_script_path(custom_path: str | Path | None = None) -> Path:
+    if custom_path is not None:
+        return Path(custom_path)
+    return Path(__file__).resolve().parents[2] / "scripts" / "research" / "cropnet_feature_forecasting_v12_server.py"
+
+
+def load_legacy_module(script_path: str | Path | None = None):
+    path = _legacy_script_path(script_path)
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("cropnet_research_legacy", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
 
 class LSTMForecaster(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0) -> None:

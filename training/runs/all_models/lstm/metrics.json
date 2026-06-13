@@ -1,0 +1,24 @@
+{
+  "model_name": "lstm",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 4.80980656542208,
+    "mae": 0.4654141962528229,
+    "mse": 23.134239196777344,
+    "r2": 0.699128270149231,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 3.308914259121676,
+    "mae": 0.5015737414360046,
+    "mse": 10.94891357421875,
+    "r2": 0.8582866191864014,
+    "n_samples": 41580.0
+  },
+  "trainable_parameters": 28259,
+  "total_parameters": 28259,
+  "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/lstm/history.csv",
+  "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/lstm/loss_curve.png",
+  "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/lstm/checkpoint.pt",
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/lstm/test_predictions.csv"
+}

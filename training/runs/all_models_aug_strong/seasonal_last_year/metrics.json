@@ -1,0 +1,21 @@
+{
+  "model_name": "seasonal_last_year",
+  "model_type": "baseline",
+  "train_metrics": {
+    "rmse": 4.732617143167585,
+    "mae": 0.3600773513317108,
+    "mse": 22.39766502380371,
+    "r2": 0.7087078094482422,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 3.2526788674972935,
+    "mae": 0.42000022530555725,
+    "mse": 10.579919815063477,
+    "r2": 0.8630625605583191,
+    "n_samples": 41580.0
+  },
+  "trainable_parameters": 0,
+  "total_parameters": 0,
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models_aug_strong/seasonal_last_year/test_predictions.csv"
+}

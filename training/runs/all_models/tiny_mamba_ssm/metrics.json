@@ -1,0 +1,24 @@
+{
+  "model_name": "tiny_mamba_ssm",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 4.811860871914231,
+    "mae": 0.4663781225681305,
+    "mse": 23.15400505065918,
+    "r2": 0.6988712549209595,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 3.3910652964680095,
+    "mae": 0.5127897262573242,
+    "mse": 11.499323844909668,
+    "r2": 0.8511625528335571,
+    "n_samples": 41580.0
+  },
+  "trainable_parameters": 28003,
+  "total_parameters": 28003,
+  "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/tiny_mamba_ssm/history.csv",
+  "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/tiny_mamba_ssm/loss_curve.png",
+  "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/tiny_mamba_ssm/checkpoint.pt",
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/all_models/tiny_mamba_ssm/test_predictions.csv"
+}
