@@ -1,2 +1,2 @@
 model,model_type,checkpoint_path,history_path,predictions_path,trainable_parameters,total_parameters,status
-lstm,learned,training/runs/lstm_best/lstm/checkpoint.pt,training/runs/lstm_best/lstm/history.csv,training/runs/lstm_best/lstm/test_predictions.csv,58848,58848,trained
+lstm,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/test_predictions.csv,58848,58848,trained

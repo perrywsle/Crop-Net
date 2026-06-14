@@ -39,6 +39,12 @@ function estimateTokens(text) {
   return Math.max(1, Math.ceil(text.trim().split(/\s+/).filter(Boolean).length * 1.3));
 }
 
+function formatTargetModeLabel(mode) {
+  if (!mode) return null;
+  if (mode === "seasonal_residual") return "seasonal correction";
+  return String(mode).replaceAll("_", " ");
+}
+
 function escapeHtml(text) {
   return String(text)
     .replaceAll("&", "&amp;")
@@ -181,6 +187,16 @@ function renderCropTabs() {
 
 function buildChatContextSnapshot(result) {
   if (!result) return {};
+  const featureModelRuns = (result.feature_model_runs || []).map((run) => ({
+    key: run.key,
+    label: run.label,
+    r2: run.r2,
+    val_r2: run.val_r2,
+    rmse: run.rmse,
+    val_rmse: run.val_rmse,
+    trainable_parameters: run.trainable_parameters,
+    target_mode: formatTargetModeLabel(run.target_mode) || run.target_mode,
+  }));
   return {
     headline: result.headline || {},
     forecast_headline: result.forecast_headline || {},
@@ -189,16 +205,7 @@ function buildChatContextSnapshot(result) {
       holdout: result.summary?.holdout || {},
     },
     benchmark_summary: result.benchmark_summary || result.summary || {},
-    feature_model_runs: (result.feature_model_runs || []).map((run) => ({
-      key: run.key,
-      label: run.label,
-      r2: run.r2,
-      val_r2: run.val_r2,
-      rmse: run.rmse,
-      val_rmse: run.val_rmse,
-      trainable_parameters: run.trainable_parameters,
-      target_mode: run.target_mode,
-    })),
+    feature_model_runs,
     drivers: (result.drivers || []).slice(0, 3),
     feature_groups: (result.feature_groups || []).map((group) => ({
       group: group.group,
@@ -227,16 +234,6 @@ function buildChatContextSnapshot(result) {
       importance: item.importance,
     })),
     feature_model_best: result.feature_model_best || {},
-    feature_model_runs: (result.feature_model_runs || []).slice(0, 4).map((run) => ({
-      key: run.key,
-      label: run.label,
-      r2: run.r2,
-      val_r2: run.val_r2,
-      rmse: run.rmse,
-      val_rmse: run.val_rmse,
-      trainable_parameters: run.trainable_parameters,
-      target_mode: run.target_mode,
-    })),
     feature_forecast_models: (result.feature_forecast_models || []).slice(0, 4).map((model) => ({
       key: model.key,
       label: model.label,
@@ -980,7 +977,7 @@ function renderModelQualityCard(result) {
       ];
       const metaBits = [
         run.trainable_parameters !== null && run.trainable_parameters !== undefined ? `${formatValue(run.trainable_parameters, "integer")} params` : null,
-        run.target_mode ? `${run.target_mode}` : null,
+        run.target_mode ? `${formatTargetModeLabel(run.target_mode) || run.target_mode}` : null,
       ].filter(Boolean);
       return `
         <div class="model-quality-item ${isBest ? "best" : ""}">

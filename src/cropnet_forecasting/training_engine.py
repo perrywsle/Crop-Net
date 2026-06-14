@@ -248,6 +248,42 @@ def _forward_model(model: nn.Module, xb: torch.Tensor) -> tuple[torch.Tensor, to
     return model(xb), None
 
 
+def _physics_breakdown(
+    model: nn.Module,
+    xraw: torch.Tensor,
+    latent: torch.Tensor | None,
+    *,
+    physics_active: bool,
+    device: torch.device,
+) -> dict[str, torch.Tensor]:
+    zero = torch.tensor(0.0, device=device)
+    out = {
+        "total": zero,
+        "latent": zero,
+        "ag": zero,
+        "ndvi": zero,
+        "weather": zero,
+        "weather_identity": zero,
+        "weather_threshold": zero,
+        "weather_drought": zero,
+        "weather_bounded": zero,
+        "consistency": zero,
+        "growth": zero,
+        "phenology": zero,
+        "water": zero,
+    }
+    if not physics_active:
+        return out
+    physics_module = getattr(model, "physics", None)
+    if physics_module is None or latent is None:
+        raise ValueError("Physics mode requires a model with forward_with_latents() and physics module.")
+    physics_out = physics_module(xraw, latent)
+    for key in out:
+        if key in physics_out:
+            out[key] = physics_out[key]
+    return out
+
+
 def evaluate_torch_model(
     model: nn.Module,
     loader: DataLoader,
@@ -259,9 +295,37 @@ def evaluate_torch_model(
 ) -> dict[str, float]:
     model.eval()
     if loader is None or len(loader.dataset) == 0:
-        return {"forecast_loss": float("nan"), "physics_loss": float("nan"), "total_loss": float("nan")}
+        return {
+            "forecast_loss": float("nan"),
+            "physics_loss": float("nan"),
+            "physics_latent_loss": float("nan"),
+            "physics_ag_loss": float("nan"),
+            "physics_ndvi_loss": float("nan"),
+            "physics_weather_loss": float("nan"),
+            "physics_weather_identity_loss": float("nan"),
+            "physics_weather_threshold_loss": float("nan"),
+            "physics_weather_drought_loss": float("nan"),
+            "physics_weather_bounded_loss": float("nan"),
+            "physics_consistency_loss": float("nan"),
+            "physics_growth_loss": float("nan"),
+            "physics_phenology_loss": float("nan"),
+            "physics_water_loss": float("nan"),
+            "total_loss": float("nan"),
+        }
     forecast_losses = []
     physics_losses = []
+    physics_latent_losses = []
+    physics_ag_losses = []
+    physics_ndvi_losses = []
+    physics_weather_losses = []
+    physics_weather_identity_losses = []
+    physics_weather_threshold_losses = []
+    physics_weather_drought_losses = []
+    physics_weather_bounded_losses = []
+    physics_consistency_losses = []
+    physics_growth_losses = []
+    physics_phenology_losses = []
+    physics_water_losses = []
     total_losses = []
     with torch.no_grad():
         for batch in loader:
@@ -269,20 +333,40 @@ def evaluate_torch_model(
             xb, xraw, yb = xb.to(device), xraw.to(device), yb.to(device)
             pred, latent = _forward_model(model, xb)
             forecast_loss = loss_fn(pred, yb)
-            physics_loss = torch.tensor(0.0, device=device)
-            if physics_active:
-                physics_module = getattr(model, "physics", None)
-                if physics_module is None or latent is None:
-                    raise ValueError("Physics mode requires a model with forward_with_latents() and physics module.")
-                physics_loss = physics_module(xraw, latent)["total"]
+            physics_terms = _physics_breakdown(model, xraw, latent, physics_active=physics_active, device=device)
+            physics_loss = physics_terms["total"]
             total_loss = forecast_loss + physics_weight * physics_loss
             forecast_losses.append(forecast_loss.item() * len(xb))
             physics_losses.append(physics_loss.item() * len(xb))
+            physics_latent_losses.append(physics_terms["latent"].item() * len(xb))
+            physics_ag_losses.append(physics_terms["ag"].item() * len(xb))
+            physics_ndvi_losses.append(physics_terms["ndvi"].item() * len(xb))
+            physics_weather_losses.append(physics_terms["weather"].item() * len(xb))
+            physics_weather_identity_losses.append(physics_terms["weather_identity"].item() * len(xb))
+            physics_weather_threshold_losses.append(physics_terms["weather_threshold"].item() * len(xb))
+            physics_weather_drought_losses.append(physics_terms["weather_drought"].item() * len(xb))
+            physics_weather_bounded_losses.append(physics_terms["weather_bounded"].item() * len(xb))
+            physics_consistency_losses.append(physics_terms["consistency"].item() * len(xb))
+            physics_growth_losses.append(physics_terms["growth"].item() * len(xb))
+            physics_phenology_losses.append(physics_terms["phenology"].item() * len(xb))
+            physics_water_losses.append(physics_terms["water"].item() * len(xb))
             total_losses.append(total_loss.item() * len(xb))
     denom = len(loader.dataset)
     return {
         "forecast_loss": float(np.sum(forecast_losses) / denom),
         "physics_loss": float(np.sum(physics_losses) / denom),
+        "physics_latent_loss": float(np.sum(physics_latent_losses) / denom),
+        "physics_ag_loss": float(np.sum(physics_ag_losses) / denom),
+        "physics_ndvi_loss": float(np.sum(physics_ndvi_losses) / denom),
+        "physics_weather_loss": float(np.sum(physics_weather_losses) / denom),
+        "physics_weather_identity_loss": float(np.sum(physics_weather_identity_losses) / denom),
+        "physics_weather_threshold_loss": float(np.sum(physics_weather_threshold_losses) / denom),
+        "physics_weather_drought_loss": float(np.sum(physics_weather_drought_losses) / denom),
+        "physics_weather_bounded_loss": float(np.sum(physics_weather_bounded_losses) / denom),
+        "physics_consistency_loss": float(np.sum(physics_consistency_losses) / denom),
+        "physics_growth_loss": float(np.sum(physics_growth_losses) / denom),
+        "physics_phenology_loss": float(np.sum(physics_phenology_losses) / denom),
+        "physics_water_loss": float(np.sum(physics_water_losses) / denom),
         "total_loss": float(np.sum(total_losses) / denom),
     }
 
@@ -335,6 +419,18 @@ def train_torch_model(
         model.train()
         train_forecast_total = 0.0
         train_physics_total = 0.0
+        train_physics_latent_total = 0.0
+        train_physics_ag_total = 0.0
+        train_physics_ndvi_total = 0.0
+        train_physics_weather_total = 0.0
+        train_physics_weather_identity_total = 0.0
+        train_physics_weather_threshold_total = 0.0
+        train_physics_weather_drought_total = 0.0
+        train_physics_weather_bounded_total = 0.0
+        train_physics_consistency_total = 0.0
+        train_physics_growth_total = 0.0
+        train_physics_phenology_total = 0.0
+        train_physics_water_total = 0.0
         train_total = 0.0
         train_count = 0
         effective_physics_weight = physics_weight if epoch > physics_warmup_epochs else 0.0
@@ -345,24 +441,45 @@ def train_torch_model(
             optimizer.zero_grad(set_to_none=True)
             pred, latent = _forward_model(model, xb)
             forecast_loss = loss_fn(pred, yb)
-            physics_loss = torch.tensor(0.0, device=device)
-            if physics_active:
-                physics_module = getattr(model, "physics", None)
-                if physics_module is None or latent is None:
-                    raise ValueError("Physics mode requires a model with forward_with_latents() and physics module.")
-                physics_loss = physics_module(xraw, latent)["total"]
+            physics_terms = _physics_breakdown(model, xraw, latent, physics_active=physics_active, device=device)
+            physics_loss = physics_terms["total"]
             loss = forecast_loss + effective_physics_weight * physics_loss
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             train_forecast_total += forecast_loss.item() * len(xb)
             train_physics_total += physics_loss.item() * len(xb)
+            train_physics_latent_total += physics_terms["latent"].item() * len(xb)
+            train_physics_ag_total += physics_terms["ag"].item() * len(xb)
+            train_physics_ndvi_total += physics_terms["ndvi"].item() * len(xb)
+            train_physics_weather_total += physics_terms["weather"].item() * len(xb)
+            train_physics_weather_identity_total += physics_terms["weather_identity"].item() * len(xb)
+            train_physics_weather_threshold_total += physics_terms["weather_threshold"].item() * len(xb)
+            train_physics_weather_drought_total += physics_terms["weather_drought"].item() * len(xb)
+            train_physics_weather_bounded_total += physics_terms["weather_bounded"].item() * len(xb)
+            train_physics_consistency_total += physics_terms["consistency"].item() * len(xb)
+            train_physics_growth_total += physics_terms["growth"].item() * len(xb)
+            train_physics_phenology_total += physics_terms["phenology"].item() * len(xb)
+            train_physics_water_total += physics_terms["water"].item() * len(xb)
             train_total += loss.item() * len(xb)
             train_count += len(xb)
 
         train_forecast_loss = float(train_forecast_total / max(train_count, 1))
         train_physics_loss = float(train_physics_total / max(train_count, 1))
+        train_physics_latent_loss = float(train_physics_latent_total / max(train_count, 1))
+        train_physics_ag_loss = float(train_physics_ag_total / max(train_count, 1))
+        train_physics_ndvi_loss = float(train_physics_ndvi_total / max(train_count, 1))
+        train_physics_weather_loss = float(train_physics_weather_total / max(train_count, 1))
+        train_physics_weather_identity_loss = float(train_physics_weather_identity_total / max(train_count, 1))
+        train_physics_weather_threshold_loss = float(train_physics_weather_threshold_total / max(train_count, 1))
+        train_physics_weather_drought_loss = float(train_physics_weather_drought_total / max(train_count, 1))
+        train_physics_weather_bounded_loss = float(train_physics_weather_bounded_total / max(train_count, 1))
+        train_physics_consistency_loss = float(train_physics_consistency_total / max(train_count, 1))
+        train_physics_growth_loss = float(train_physics_growth_total / max(train_count, 1))
+        train_physics_phenology_loss = float(train_physics_phenology_total / max(train_count, 1))
+        train_physics_water_loss = float(train_physics_water_total / max(train_count, 1))
         train_loss = float(train_total / max(train_count, 1))
+
         val_losses = (
             evaluate_torch_model(
                 model,
@@ -373,7 +490,23 @@ def train_torch_model(
                 physics_active=physics_active,
             )
             if val_loader is not None
-            else {"forecast_loss": train_forecast_loss, "physics_loss": train_physics_loss, "total_loss": train_loss}
+            else {
+                "forecast_loss": train_forecast_loss,
+                "physics_loss": train_physics_loss,
+                "physics_latent_loss": train_physics_latent_loss,
+                "physics_ag_loss": train_physics_ag_loss,
+                "physics_ndvi_loss": train_physics_ndvi_loss,
+                "physics_weather_loss": train_physics_weather_loss,
+                "physics_weather_identity_loss": train_physics_weather_identity_loss,
+                "physics_weather_threshold_loss": train_physics_weather_threshold_loss,
+                "physics_weather_drought_loss": train_physics_weather_drought_loss,
+                "physics_weather_bounded_loss": train_physics_weather_bounded_loss,
+                "physics_consistency_loss": train_physics_consistency_loss,
+                "physics_growth_loss": train_physics_growth_loss,
+                "physics_phenology_loss": train_physics_phenology_loss,
+                "physics_water_loss": train_physics_water_loss,
+                "total_loss": train_loss,
+            }
         )
         val_loss = val_losses["total_loss"]
         current_lr = float(optimizer.param_groups[0]["lr"])
@@ -383,9 +516,33 @@ def train_torch_model(
                 "train_loss": train_loss,
                 "train_forecast_loss": train_forecast_loss,
                 "train_physics_loss": train_physics_loss,
+                "train_physics_latent_loss": train_physics_latent_loss,
+                "train_physics_ag_loss": train_physics_ag_loss,
+                "train_physics_ndvi_loss": train_physics_ndvi_loss,
+                "train_physics_weather_loss": train_physics_weather_loss,
+                "train_physics_weather_identity_loss": train_physics_weather_identity_loss,
+                "train_physics_weather_threshold_loss": train_physics_weather_threshold_loss,
+                "train_physics_weather_drought_loss": train_physics_weather_drought_loss,
+                "train_physics_weather_bounded_loss": train_physics_weather_bounded_loss,
+                "train_physics_consistency_loss": train_physics_consistency_loss,
+                "train_physics_growth_loss": train_physics_growth_loss,
+                "train_physics_phenology_loss": train_physics_phenology_loss,
+                "train_physics_water_loss": train_physics_water_loss,
                 "val_loss": val_loss,
                 "val_forecast_loss": val_losses["forecast_loss"],
                 "val_physics_loss": val_losses["physics_loss"],
+                "val_physics_latent_loss": val_losses["physics_latent_loss"],
+                "val_physics_ag_loss": val_losses["physics_ag_loss"],
+                "val_physics_ndvi_loss": val_losses["physics_ndvi_loss"],
+                "val_physics_weather_loss": val_losses["physics_weather_loss"],
+                "val_physics_weather_identity_loss": val_losses["physics_weather_identity_loss"],
+                "val_physics_weather_threshold_loss": val_losses["physics_weather_threshold_loss"],
+                "val_physics_weather_drought_loss": val_losses["physics_weather_drought_loss"],
+                "val_physics_weather_bounded_loss": val_losses["physics_weather_bounded_loss"],
+                "val_physics_consistency_loss": val_losses["physics_consistency_loss"],
+                "val_physics_growth_loss": val_losses["physics_growth_loss"],
+                "val_physics_phenology_loss": val_losses["physics_phenology_loss"],
+                "val_physics_water_loss": val_losses["physics_water_loss"],
                 "lr": current_lr,
             }
         )
@@ -471,6 +628,7 @@ def build_pinn_model(
     feature_count: int,
     *,
     feature_names: list[str],
+    feature_scaler: FeatureScaler | None = None,
     hidden_size: int,
     num_layers: int,
     dropout: float,
@@ -494,6 +652,7 @@ def build_pinn_model(
         dropout=dropout,
         physics_loss=physics_loss,
         physics_config=physics_config,
+        feature_scaler=feature_scaler,
     )
 
 

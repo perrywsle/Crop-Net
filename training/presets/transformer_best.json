@@ -11,7 +11,7 @@
   "base_args": {
     "run_name": "transformer_best",
     "models": ["transformer_encoder"],
-    "target_mode": "raw",
+    "target_mode": "seasonal_residual",
     "latent_state_dim": 3,
     "physics_loss": "combined",
     "physics_config": "training/physics_weights.json",

@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
+
+from .scaling import FeatureScaler
 
 
 DEFAULT_PHYSICS_CONFIG: dict[str, Any] = {
@@ -175,6 +178,7 @@ class CropPhysicsModule(nn.Module):
         latent_state_dim: int = 3,
         physics_loss: str = "combined",
         physics_config: dict[str, Any] | str | Path | None = None,
+        feature_scaler: FeatureScaler | None = None,
     ) -> None:
         super().__init__()
         if latent_state_dim < 3:
@@ -183,6 +187,10 @@ class CropPhysicsModule(nn.Module):
         self.latent_state_dim = int(latent_state_dim)
         self.physics_loss = physics_loss
         self.config = load_physics_config(physics_config)
+        self._feature_scale_lookup = {
+            name: max(float(std), 1e-6)
+            for name, std in zip(feature_scaler.feature_names, feature_scaler.stds, strict=False)
+        } if feature_scaler is not None else {}
 
         self.ag_features = [
             "ag_green_pixel_ratio",
@@ -251,6 +259,9 @@ class CropPhysicsModule(nn.Module):
         if transform == "bounded_ratio":
             return torch.clamp(selected.mean(dim=-1), 0.0, 1.0)
         return selected.mean(dim=-1)
+
+    def _feature_scale(self, feature_name: str, fallback: float) -> float:
+        return float(self._feature_scale_lookup.get(feature_name, fallback))
 
     def _latent_consistency(self, x_raw: torch.Tensor, latent_seq: torch.Tensor) -> torch.Tensor:
         biomass = latent_seq[..., 0]
@@ -414,10 +425,24 @@ class CropPhysicsModule(nn.Module):
         smooth_loss = _second_difference_penalty(mean_proxy)
         return shape_weight * template_loss + ordering_weight * order_loss + bounds_weight * bounds_loss + smooth_weight * smooth_loss
 
-    def _weather_loss(self, x_raw: torch.Tensor, latent_seq: torch.Tensor) -> torch.Tensor:
+    def _weather_loss(self, x_raw: torch.Tensor, latent_seq: torch.Tensor) -> dict[str, torch.Tensor]:
         section = _section(self.config, "weather")
         if not self._weather_idx:
-            return torch.zeros((), device=x_raw.device, dtype=x_raw.dtype)
+            zero = torch.zeros((), device=x_raw.device, dtype=x_raw.dtype)
+            return {
+                "total": zero,
+                "identity": zero,
+                "threshold": zero,
+                "drought": zero,
+                "bounded": zero,
+                "gdd": zero,
+                "vpd": zero,
+                "temp_range": zero,
+                "heat_days": zero,
+                "cold_days": zero,
+                "precip_days": zero,
+                "heavy_days": zero,
+            }
 
         temp_mean = self._select(x_raw, _feature_indices(self.feature_names, ["weather_temp_mean"]), transform="identity")
         temp_max = self._select(x_raw, _feature_indices(self.feature_names, ["weather_temp_max"]), transform="identity")
@@ -434,43 +459,104 @@ class CropPhysicsModule(nn.Module):
         temp_range = self._select(x_raw, _feature_indices(self.feature_names, ["weather_temp_range_mean"]), transform="identity")
 
         gdd_base = float(section.get("gdd_base_c", 10.0))
-        gdd_scale = float(section.get("gdd_scale", 30.0))
         heat_threshold = float(section.get("heat_threshold_c", 35.0))
         frost_threshold = float(section.get("frost_threshold_c", 0.0))
         drought_scale = float(section.get("drought_scale", 1.25))
+        days_per_month = 30.4375
 
         es = 0.6108 * torch.exp((17.27 * temp_mean) / (temp_mean + 237.3))
         humidity_frac = torch.clamp(humidity / 100.0, 0.0, 1.0)
         vpd_proxy = torch.relu(es * (1.0 - humidity_frac))
-        gdd_proxy = torch.relu(temp_mean - gdd_base) * gdd_scale
+        gdd_proxy = torch.relu(temp_mean - gdd_base) * days_per_month
         temp_range_proxy = temp_max - temp_min
         drought_proxy = torch.sigmoid(drought_scale * (vpd_proxy / (precip + 1.0) - 0.5))
 
-        count_scale = 31.0
+        count_scale = days_per_month
         heat_proxy = count_scale * torch.sigmoid((temp_max - heat_threshold) / 2.0)
         cold_proxy = count_scale * torch.sigmoid((frost_threshold - temp_min) / 2.0)
         rain_proxy = count_scale * torch.sigmoid((precip - 1.0) / 4.0)
         heavy_proxy = count_scale * torch.sigmoid((precip - 10.0) / 4.0)
 
-        identity_loss = (
-            torch.mean((gdd - gdd_proxy) ** 2)
-            + torch.mean((vpd - vpd_proxy) ** 2)
-            + torch.mean((temp_range - temp_range_proxy) ** 2)
+        gdd_loss = F.smooth_l1_loss(
+            torch.log1p(torch.clamp(gdd, min=0.0)),
+            torch.log1p(torch.clamp(gdd_proxy, min=0.0)),
+            reduction="mean",
         )
+        vpd_loss = F.smooth_l1_loss(
+            (vpd - vpd_proxy) / self._feature_scale("weather_vpd_mean", 1.0),
+            torch.zeros_like(vpd),
+            reduction="mean",
+        )
+        temp_range_loss = F.smooth_l1_loss(
+            (temp_range - temp_range_proxy) / self._feature_scale("weather_temp_range_mean", 5.0),
+            torch.zeros_like(temp_range),
+            reduction="mean",
+        )
+        identity_loss = gdd_loss + vpd_loss + temp_range_loss
 
+        heat_days_loss = F.smooth_l1_loss(
+            (heat_days - heat_proxy) / self._feature_scale("weather_heat_stress_days", days_per_month),
+            torch.zeros_like(heat_days),
+            reduction="mean",
+        )
+        cold_days_loss = F.smooth_l1_loss(
+            (cold_days - cold_proxy) / self._feature_scale("weather_cold_stress_days", days_per_month),
+            torch.zeros_like(cold_days),
+            reduction="mean",
+        )
+        precip_days_loss = F.smooth_l1_loss(
+            (precip_days - rain_proxy) / self._feature_scale("weather_precipitation_days", days_per_month),
+            torch.zeros_like(precip_days),
+            reduction="mean",
+        )
+        heavy_days_loss = F.smooth_l1_loss(
+            (heavy_days - heavy_proxy) / self._feature_scale("weather_heavy_rain_days", days_per_month),
+            torch.zeros_like(heavy_days),
+            reduction="mean",
+        )
         threshold_loss = (
-            torch.mean((heat_days - heat_proxy) ** 2)
-            + torch.mean((cold_days - cold_proxy) ** 2)
-            + torch.mean((precip_days - rain_proxy) ** 2)
-            + torch.mean((heavy_days - heavy_proxy) ** 2)
-            + torch.mean(torch.relu(heavy_days - precip_days) ** 2)
-            + torch.mean(torch.relu(-precip_days) ** 2)
-            + torch.mean(torch.relu(precip_days - count_scale) ** 2)
+            heat_days_loss
+            + cold_days_loss
+            + precip_days_loss
+            + heavy_days_loss
+            + F.smooth_l1_loss(
+                torch.relu(heavy_days - precip_days) / self._feature_scale("weather_heavy_rain_days", days_per_month),
+                torch.zeros_like(heavy_days),
+                reduction="mean",
+            )
+            + F.smooth_l1_loss(
+                torch.relu(-precip_days) / self._feature_scale("weather_precipitation_days", days_per_month),
+                torch.zeros_like(precip_days),
+                reduction="mean",
+            )
+            + F.smooth_l1_loss(
+                torch.relu(precip_days - count_scale) / self._feature_scale("weather_precipitation_days", days_per_month),
+                torch.zeros_like(precip_days),
+                reduction="mean",
+            )
         )
 
         drought_loss = torch.mean((torch.sigmoid(drought) - drought_proxy) ** 2)
         bounded_loss = _bounded_01(torch.sigmoid((humidity - 50.0) / 20.0)) + _bounded_01(torch.sigmoid((precip - 10.0) / 20.0))
-        return float(section.get("identity_weight", 0.22)) * identity_loss + float(section.get("threshold_weight", 0.12)) * threshold_loss + float(section.get("bounded_weight", 0.08)) * (drought_loss + bounded_loss)
+        total = (
+            float(section.get("identity_weight", 0.22)) * identity_loss
+            + float(section.get("threshold_weight", 0.12)) * threshold_loss
+            + float(section.get("bounded_weight", 0.08)) * (drought_loss + bounded_loss)
+        )
+        return {
+            "total": total,
+            "identity": identity_loss,
+            "threshold": threshold_loss,
+            "drought": drought_loss,
+            "bounded": bounded_loss,
+            "gdd": gdd_loss,
+            "vpd": vpd_loss,
+            "temp_range": temp_range_loss,
+            "heat_days": heat_days_loss,
+            "cold_days": cold_days_loss,
+            "precip_days": precip_days_loss,
+            "heavy_days": heavy_days_loss,
+        }
 
     def forward(self, x_raw: torch.Tensor, latent_seq: torch.Tensor) -> dict[str, torch.Tensor]:
         if latent_seq.ndim != 3:
@@ -500,7 +586,7 @@ class CropPhysicsModule(nn.Module):
         total = (
             float(_section(self.config, "ag").get("weight", 0.30)) * ag_loss
             + float(_section(self.config, "ndvi").get("weight", 0.40)) * ndvi_loss
-            + float(_section(self.config, "weather").get("weight", 0.30)) * weather_loss
+            + float(_section(self.config, "weather").get("weight", 0.30)) * weather_loss["total"]
             + float(latent_cfg.get("weight", 0.10)) * latent_total
         )
         return {
@@ -508,7 +594,18 @@ class CropPhysicsModule(nn.Module):
             "latent": latent_total,
             "ag": ag_loss,
             "ndvi": ndvi_loss,
-            "weather": weather_loss,
+            "weather": weather_loss["total"],
+            "weather_identity": weather_loss["identity"],
+            "weather_threshold": weather_loss["threshold"],
+            "weather_drought": weather_loss["drought"],
+            "weather_bounded": weather_loss["bounded"],
+            "weather_gdd": weather_loss["gdd"],
+            "weather_vpd": weather_loss["vpd"],
+            "weather_temp_range": weather_loss["temp_range"],
+            "weather_heat_days": weather_loss["heat_days"],
+            "weather_cold_days": weather_loss["cold_days"],
+            "weather_precip_days": weather_loss["precip_days"],
+            "weather_heavy_days": weather_loss["heavy_days"],
             "consistency": latent_loss,
             "growth": latent_dynamics["growth"],
             "phenology": latent_dynamics["phenology"],
@@ -527,6 +624,7 @@ class PINNForecaster(nn.Module):
         dropout: float = 0.0,
         physics_loss: str = "combined",
         physics_config: dict[str, Any] | str | Path | None = None,
+        feature_scaler: FeatureScaler | None = None,
     ) -> None:
         super().__init__()
         if not hasattr(backbone, "encode"):
@@ -552,6 +650,7 @@ class PINNForecaster(nn.Module):
             latent_state_dim=latent_state_dim,
             physics_loss=physics_loss,
             physics_config=physics_config,
+            feature_scaler=feature_scaler,
         )
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:

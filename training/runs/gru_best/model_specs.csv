@@ -1,2 +1,2 @@
 model,model_type,checkpoint_path,history_path,predictions_path,trainable_parameters,total_parameters,status
-gru,learned,training/runs/gru_best/gru/checkpoint.pt,training/runs/gru_best/gru/history.csv,training/runs/gru_best/gru/test_predictions.csv,46080,46080,trained
+gru,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/gru_best/gru/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/gru_best/gru/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/gru_best/gru/test_predictions.csv,46080,46080,trained

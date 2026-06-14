@@ -49,6 +49,18 @@ class ModelRunSummary:
     train_loss: float
     val_loss: float
     physics_loss: float
+    physics_latent_loss: float
+    physics_ag_loss: float
+    physics_ndvi_loss: float
+    physics_weather_loss: float
+    physics_weather_identity_loss: float
+    physics_weather_threshold_loss: float
+    physics_weather_drought_loss: float
+    physics_weather_bounded_loss: float
+    physics_consistency_loss: float
+    physics_growth_loss: float
+    physics_phenology_loss: float
+    physics_water_loss: float
     rmse: float
     mae: float
     mse: float
@@ -252,6 +264,21 @@ def _print_model_report(summary: ModelRunSummary) -> None:
     print(f"  Type: {summary.model_type}")
     print(f"  Params: {summary.trainable_parameters:,} trainable / {summary.total_parameters:,} total")
     print(f"  Train Loss: {summary.train_loss:.4f} | Val Loss: {summary.val_loss:.4f} | Physics Loss: {summary.physics_loss:.4f}")
+    print(
+        "  Physics breakdown: "
+        f"latent={summary.physics_latent_loss:.4f} | "
+        f"ag={summary.physics_ag_loss:.4f} | "
+        f"ndvi={summary.physics_ndvi_loss:.4f} | "
+        f"weather={summary.physics_weather_loss:.4f} | "
+        f"weather_id={summary.physics_weather_identity_loss:.4f} | "
+        f"weather_thr={summary.physics_weather_threshold_loss:.4f} | "
+        f"weather_drt={summary.physics_weather_drought_loss:.4f} | "
+        f"weather_bnd={summary.physics_weather_bounded_loss:.4f} | "
+        f"consistency={summary.physics_consistency_loss:.4f} | "
+        f"growth={summary.physics_growth_loss:.4f} | "
+        f"phenology={summary.physics_phenology_loss:.4f} | "
+        f"water={summary.physics_water_loss:.4f}"
+    )
     print(f"  Val   RMSE: {summary.val_rmse:.4f} | MAE: {summary.val_mae:.4f} | MSE: {summary.val_mse:.4f} | R2: {summary.val_r2:.4f}")
     print(f"  Test  RMSE: {summary.rmse:.4f} | MAE: {summary.mae:.4f} | MSE: {summary.mse:.4f} | R2: {summary.r2:.4f}")
     if summary.history_path:
@@ -297,6 +324,7 @@ def _fit_single_model(
             model_name,
             len(feature_cols),
             feature_names=feature_cols,
+            feature_scaler=scaler,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout,
@@ -348,6 +376,18 @@ def _fit_single_model(
         train_loss = float(final_row.get("train_loss", float("nan")))
         val_loss = float(final_row.get("val_loss", float("nan")))
         physics_loss_value = float(final_row.get("val_physics_loss", float("nan")))
+        physics_latent_loss_value = float(final_row.get("val_physics_latent_loss", float("nan")))
+        physics_ag_loss_value = float(final_row.get("val_physics_ag_loss", float("nan")))
+        physics_ndvi_loss_value = float(final_row.get("val_physics_ndvi_loss", float("nan")))
+        physics_weather_loss_value = float(final_row.get("val_physics_weather_loss", float("nan")))
+        physics_weather_identity_loss_value = float(final_row.get("val_physics_weather_identity_loss", float("nan")))
+        physics_weather_threshold_loss_value = float(final_row.get("val_physics_weather_threshold_loss", float("nan")))
+        physics_weather_drought_loss_value = float(final_row.get("val_physics_weather_drought_loss", float("nan")))
+        physics_weather_bounded_loss_value = float(final_row.get("val_physics_weather_bounded_loss", float("nan")))
+        physics_consistency_loss_value = float(final_row.get("val_physics_consistency_loss", float("nan")))
+        physics_growth_loss_value = float(final_row.get("val_physics_growth_loss", float("nan")))
+        physics_phenology_loss_value = float(final_row.get("val_physics_phenology_loss", float("nan")))
+        physics_water_loss_value = float(final_row.get("val_physics_water_loss", float("nan")))
         save_json(
             {
                 "model_name": model_name,
@@ -379,6 +419,18 @@ def _fit_single_model(
             train_loss=train_loss,
             val_loss=val_loss,
             physics_loss=physics_loss_value,
+            physics_latent_loss=physics_latent_loss_value,
+            physics_ag_loss=physics_ag_loss_value,
+            physics_ndvi_loss=physics_ndvi_loss_value,
+            physics_weather_loss=physics_weather_loss_value,
+            physics_weather_identity_loss=physics_weather_identity_loss_value,
+            physics_weather_threshold_loss=physics_weather_threshold_loss_value,
+            physics_weather_drought_loss=physics_weather_drought_loss_value,
+            physics_weather_bounded_loss=physics_weather_bounded_loss_value,
+            physics_consistency_loss=physics_consistency_loss_value,
+            physics_growth_loss=physics_growth_loss_value,
+            physics_phenology_loss=physics_phenology_loss_value,
+            physics_water_loss=physics_water_loss_value,
             rmse=test_metrics["rmse"],
             mae=test_metrics["mae"],
             mse=test_metrics["mse"],
@@ -405,6 +457,18 @@ def _fit_single_model(
                 "final_train_loss": train_loss,
                 "final_val_loss": val_loss,
                 "final_physics_loss": physics_loss_value,
+                "final_physics_latent_loss": physics_latent_loss_value,
+                "final_physics_ag_loss": physics_ag_loss_value,
+                "final_physics_ndvi_loss": physics_ndvi_loss_value,
+                "final_physics_weather_loss": physics_weather_loss_value,
+                "final_physics_weather_identity_loss": physics_weather_identity_loss_value,
+                "final_physics_weather_threshold_loss": physics_weather_threshold_loss_value,
+                "final_physics_weather_drought_loss": physics_weather_drought_loss_value,
+                "final_physics_weather_bounded_loss": physics_weather_bounded_loss_value,
+                "final_physics_consistency_loss": physics_consistency_loss_value,
+                "final_physics_growth_loss": physics_growth_loss_value,
+                "final_physics_phenology_loss": physics_phenology_loss_value,
+                "final_physics_water_loss": physics_water_loss_value,
                 "trainable_parameters": summary.trainable_parameters,
                 "total_parameters": summary.total_parameters,
                 "history_path": str(history_path),
@@ -436,6 +500,18 @@ def _fit_single_model(
             train_loss=float("nan"),
             val_loss=float("nan"),
             physics_loss=float("nan"),
+            physics_latent_loss=float("nan"),
+            physics_ag_loss=float("nan"),
+            physics_ndvi_loss=float("nan"),
+            physics_weather_loss=float("nan"),
+            physics_weather_identity_loss=float("nan"),
+            physics_weather_threshold_loss=float("nan"),
+            physics_weather_drought_loss=float("nan"),
+            physics_weather_bounded_loss=float("nan"),
+            physics_consistency_loss=float("nan"),
+            physics_growth_loss=float("nan"),
+            physics_phenology_loss=float("nan"),
+            physics_water_loss=float("nan"),
             rmse=test_metrics["rmse"],
             mae=test_metrics["mae"],
             mse=test_metrics["mse"],
@@ -520,10 +596,22 @@ def _evaluate_sarima(
         train_loss=float("nan"),
         val_loss=float("nan"),
         physics_loss=float("nan"),
+        physics_latent_loss=float("nan"),
+        physics_ag_loss=float("nan"),
+        physics_ndvi_loss=float("nan"),
+        physics_weather_loss=float("nan"),
+        physics_weather_identity_loss=float("nan"),
+        physics_weather_threshold_loss=float("nan"),
+        physics_weather_drought_loss=float("nan"),
+        physics_weather_bounded_loss=float("nan"),
+        physics_consistency_loss=float("nan"),
+        physics_growth_loss=float("nan"),
+        physics_phenology_loss=float("nan"),
+        physics_water_loss=float("nan"),
         rmse=test_metrics["rmse"],
         mae=test_metrics["mae"],
         mse=test_metrics["mse"],
-        r2=test_metrics["r2"],
+            r2=test_metrics["r2"],
         val_rmse=val_metrics["rmse"],
         val_mae=val_metrics["mae"],
         val_mse=val_metrics["mse"],
@@ -698,6 +786,18 @@ def main() -> int:
                     train_loss=float("nan"),
                     val_loss=float("nan"),
                     physics_loss=float("nan"),
+                    physics_latent_loss=float("nan"),
+                    physics_ag_loss=float("nan"),
+                    physics_ndvi_loss=float("nan"),
+                    physics_weather_loss=float("nan"),
+                    physics_weather_identity_loss=float("nan"),
+                    physics_weather_threshold_loss=float("nan"),
+                    physics_weather_drought_loss=float("nan"),
+                    physics_weather_bounded_loss=float("nan"),
+                    physics_consistency_loss=float("nan"),
+                    physics_growth_loss=float("nan"),
+                    physics_phenology_loss=float("nan"),
+                    physics_water_loss=float("nan"),
                     rmse=metrics["rmse"],
                     mae=metrics["mae"],
                     mse=metrics["mse"],
