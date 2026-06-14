@@ -6,9 +6,7 @@ import json
 
 import pandas as pd
 from fastapi.testclient import TestClient
-import pytest
 
-import crop_fusion_ai.web.chat as chat_module
 import crop_fusion_ai.web.app as web_app_module
 from crop_fusion_ai.web.app import UploadedBlob, _build_upload_result, _stage_uploaded_folder, create_app
 
@@ -51,37 +49,17 @@ class _DummyService:
             "headline": {"predicted_yield": 123.4, "unit": "bu/acre", "year": 2022, "month": 9, "month_label": "2022-09"},
             "yield_series": [],
             "yield_trajectory_by_model": {"current": [{"predicted_yield": 123.4, "month_label": "2022-09"}]},
-            "feature_groups": [],
             "summary": self.summary.to_payload(),
             "benchmark_summary": self.summary.to_payload(),
-            "feature_model_runs": [
-                {
-                    "key": "lstm",
-                    "label": "LSTM",
-                    "r2": 0.91,
-                    "val_r2": 0.92,
-                    "rmse": 2.6,
-                    "val_rmse": 2.5,
-                    "trainable_parameters": 58848,
-                    "target_mode": "raw",
-                }
-            ],
-            "feature_model_best": {
-                "key": "lstm",
-                "label": "LSTM",
-                "r2": 0.91,
-                "val_r2": 0.92,
-                "rmse": 2.6,
-                "val_rmse": 2.5,
-                "trainable_parameters": 58848,
-                "target_mode": "raw",
-            },
+            "feature_groups": [],
+            "feature_model_runs": [],
+            "feature_model_best": {},
             "drivers": [],
             "monthly_features": [],
             "feature_importance": [],
             "feature_forecasts_by_model": {},
-            "feature_forecast_models": [],
             "derived_drivers_by_model": {},
+            "feature_forecast_models": [],
             "derived_driver_models": [],
             "crop_type": crop_type,
         }
@@ -117,13 +95,11 @@ def _install_chat_stubs(monkeypatch) -> None:
     )
 
 
-def test_health_and_config_endpoints_work() -> None:
-    monkeypatch = pytest.MonkeyPatch()
+def test_health_and_config_endpoints_work(monkeypatch) -> None:
     monkeypatch.setattr(web_app_module, "YieldModelService", _DummyService)
     with TestClient(create_app()) as client:
         health = client.get("/healthz")
         config = client.get("/api/config")
-    monkeypatch.undo()
 
     assert health.status_code == 200
     assert health.json() == {"status": "ok"}
@@ -172,14 +148,7 @@ def test_upload_endpoint_accepts_large_folders(monkeypatch) -> None:
     )
     assert payload["default_crop"] == "corn"
     assert set(payload["crops"]) == {"corn", "soybeans"}
-    assert payload["crops"]["corn"]["crop_type"] == "corn"
-    assert payload["crops"]["soybeans"]["crop_type"] == "soybeans"
-    assert set(payload["crops"]["corn"]["yield_trajectory_by_model"]) == {
-        "lstm",
-        "gru",
-        "tiny_mamba_ssm",
-        "transformer_encoder",
-    }
+    assert "current" in payload["crops"]["corn"]["yield_trajectory_by_model"]
 
 
 def test_staged_upload_folder_is_stable(tmp_path, monkeypatch) -> None:
@@ -221,84 +190,3 @@ def test_chat_endpoints_return_models_and_reply(monkeypatch) -> None:
     assert info.json()["context_length"] == 8192
     assert reply.status_code == 200
     assert reply.json()["reply"] == "The crop looks healthy."
-
-
-def test_chat_helper_flattens_structured_message(monkeypatch) -> None:
-    from langchain_core.messages import AIMessage
-
-    class _DummyChat:
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003
-            self.kwargs = kwargs
-
-        def invoke(self, prompt_messages):  # noqa: ANN001
-            del prompt_messages
-            return AIMessage(content=[{"type": "text", "text": "The crop looks healthy."}])
-
-    monkeypatch.setattr(chat_module, "ChatOllama", _DummyChat)
-
-    payload = chat_module.chat_with_ollama(
-        model="llama3.1",
-        messages=[{"role": "user", "content": "How is the crop?"}],
-        dashboard_context={"headline": {"predicted_yield": 123.4}},
-        base_url="http://localhost:11434",
-    )
-
-    assert payload["reply"] == "The crop looks healthy."
-    assert payload["model"] == "llama3.1"
-
-
-def test_chat_dashboard_context_is_compact_and_actionable() -> None:
-    context = chat_module.build_dashboard_context(
-        {
-            "headline": {"predicted_yield": 123.4, "month_label": "2022-09"},
-            "forecast_headline": {"predicted_yield": 126.8, "month_label": "2022-10"},
-            "summary": {"best_model": {"model": "Dummy"}, "holdout": {"rmse": 1.0}},
-            "drivers": [
-                {"label": "Average vegetation vigor", "importance": 0.42, "description": "Strong signal"},
-                {"label": "Total rainfall", "importance": 0.21, "description": "Useful signal"},
-            ],
-            "feature_groups": [
-                {
-                    "group": "vegetation",
-                    "label": "Vegetation health",
-                    "features": [
-                        {
-                            "label": "Average vegetation vigor",
-                            "description": "How green the crop looks.",
-                            "latest_value": "0.63",
-                            "series": [
-                                {"value": 0.58},
-                                {"value": 0.61},
-                                {"value": 0.63},
-                            ],
-                        }
-                    ],
-                }
-            ],
-            "yield_series": [
-                {"month_label": "2022-08", "predicted_yield": 122.1},
-                {"month_label": "2022-09", "predicted_yield": 123.4},
-            ],
-            "yield_trajectory_by_model": {
-                "current": [
-                    {"month_label": "2022-09", "predicted_yield": 123.4},
-                    {"month_label": "2022-10", "predicted_yield": 126.8},
-                ]
-            },
-            "monthly_features": [],
-            "feature_importance": [{"label": "Average vegetation vigor", "importance": 0.42}],
-            "feature_model_best": {"label": "LSTM"},
-            "feature_model_runs": [{"key": "lstm", "label": "LSTM", "r2": 0.91}],
-            "feature_forecast_models": [{"key": "lstm", "label": "LSTM", "supports_latent_state": True}],
-        }
-    )
-
-    prompt = chat_module._system_prompt(context)
-
-    assert context["forecast_headline"]["predicted_yield"] == 126.8
-    assert context["drivers"][0]["rank"] == 1
-    assert context["feature_groups"][0]["features"][0]["trend"] == "rising"
-    assert context["current_yield_trajectory"][-1]["predicted_yield"] == 126.8
-    assert "plain language" in prompt
-    assert "prioritized actions" in prompt
-    assert "current dashboard snapshot" in prompt

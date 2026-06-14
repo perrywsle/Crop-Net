@@ -212,7 +212,7 @@ h1 {
 
 .upload-form {
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 14px;
   align-items: end;
 }
@@ -220,6 +220,7 @@ h1 {
 .field {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .field span {
@@ -245,6 +246,15 @@ h1 {
 }
 
 .grow {
+  min-width: 0;
+}
+
+.upload-form .field.grow {
+  width: 100%;
+}
+
+.upload-form input[type="file"] {
+  width: 100%;
   min-width: 0;
 }
 

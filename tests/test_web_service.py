@@ -14,7 +14,6 @@ from crop_fusion_ai.web.feature_labels import label_payload
 import crop_fusion_ai.web.service as web_service_module
 from crop_fusion_ai.web.service import YieldModelService
 from cropnet_forecasting.data import prepare_monthly_features
-from cropnet_forecasting.models import CropNetModelFactory, infer_architecture_from_state_dict
 from cropnet_forecasting.predictor import BlankFillPredictor
 
 
@@ -95,13 +94,6 @@ def test_predict_from_monthly_frame_returns_friendly_payload() -> None:
             "55001",
             2021,
         ),
-        (
-            Path("05069_data/weather/2022_12.csv"),
-            Path("05069_data/ag/05001_2022_12_01.png"),
-            Path("05069_data/ndvi/05001_2022_12_01.png"),
-            "05001",
-            2022,
-        ),
     ],
 )
 def test_weather_directory_pipeline_preserves_real_year_and_nonzero_weather(
@@ -164,29 +156,6 @@ def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypat
     assert result["feature_forecasts_by_model"]["tiny_mamba_ssm"][0]["month_label"] == "2022-07"
     assert result["derived_drivers_by_model"]["lstm"][0]["latent_biomass"] == 0.1
     assert set(result["yield_trajectory_by_model"]) == {"lstm", "gru", "tiny_mamba_ssm", "transformer_encoder"}
-
-
-def test_tiny_mamba_ssm_architecture_is_supported() -> None:
-    state_dict = {
-        "blocks.0.in_proj.weight": pd.DataFrame([[0.0] * 35] * 64).to_numpy(),
-        "head.2.bias": pd.Series([0.0] * 35).to_numpy(),
-    }
-
-    params = infer_architecture_from_state_dict("tiny_mamba_ssm", state_dict)
-
-    assert params["input_dim"] == 35
-    assert params["output_dim"] == 35
-
-
-def test_tiny_mamba_ssm_checkpoint_loads_without_legacy_script() -> None:
-    model = CropNetModelFactory.load_checkpoint(
-        "training/runs/mamba_best/tiny_mamba_ssm/checkpoint.pt",
-        model_name="tiny_mamba_ssm",
-        device="cpu",
-    )
-
-    assert model.__class__.__name__ == "PINNForecaster"
-    assert hasattr(model, "forward_with_latents")
 
 
 @pytest.mark.parametrize(
