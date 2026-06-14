@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import math
+import shutil
 from types import SimpleNamespace
+from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from crop_fusion_ai.web.feature_labels import label_payload
 import crop_fusion_ai.web.service as web_service_module
 from crop_fusion_ai.web.service import YieldModelService
 from cropnet_forecasting.data import prepare_monthly_features
 from cropnet_forecasting.models import CropNetModelFactory, infer_architecture_from_state_dict
+from cropnet_forecasting.predictor import BlankFillPredictor
 
 
 def _synthetic_monthly_frame(service: YieldModelService) -> pd.DataFrame:
@@ -81,6 +85,56 @@ def test_predict_from_monthly_frame_returns_friendly_payload() -> None:
     assert "lstm" in result["yield_series_by_model"]
 
 
+@pytest.mark.parametrize(
+    ("weather_source", "ag_source", "ndvi_source", "county_id", "expected_year"),
+    [
+        (
+            Path("test_data/weather/2021_12.csv"),
+            Path("test_data/ag/55001_2021_12_01.png"),
+            Path("test_data/ndvi/55001_2021_12_01.png"),
+            "55001",
+            2021,
+        ),
+        (
+            Path("05069_data/weather/2022_12.csv"),
+            Path("05069_data/ag/05001_2022_12_01.png"),
+            Path("05069_data/ndvi/05001_2022_12_01.png"),
+            "05001",
+            2022,
+        ),
+    ],
+)
+def test_weather_directory_pipeline_preserves_real_year_and_nonzero_weather(
+    tmp_path: Path,
+    weather_source: Path,
+    ag_source: Path,
+    ndvi_source: Path,
+    county_id: str,
+    expected_year: int,
+) -> None:
+    service = YieldModelService()
+    staged_root = tmp_path / "upload"
+    for subdir, source in (("weather", weather_source), ("ag", ag_source), ("ndvi", ndvi_source)):
+        target_dir = staged_root / subdir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target_dir / source.name)
+
+    monthly_features, _ = service.build_monthly_frame(staged_root, county_id=county_id, crop_type="corn")
+
+    assert not monthly_features.empty
+    assert int(monthly_features.iloc[0]["year"]) == expected_year
+    assert int(monthly_features.iloc[0]["month"]) == 12
+
+    result = service.predict_from_monthly_frame(monthly_features)
+    assert result["monthly_features"][0]["weather_total_precipitation"] > 0
+    assert result["monthly_features"][0]["weather_temp_mean"] != 0
+    weather_group = next(group for group in result["feature_groups"] if group["group"] == "weather")
+    assert any(
+        any(point["value"] not in (None, 0.0) for point in feature["series"])
+        for feature in weather_group["features"]
+    )
+
+
 def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypatch, tmp_path) -> None:
     service = YieldModelService()
     frame = _synthetic_monthly_frame(service)
@@ -109,6 +163,7 @@ def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypat
     assert set(result["feature_forecasts_by_model"]) == {"lstm", "transformer_encoder", "gru", "tiny_mamba_ssm"}
     assert result["feature_forecasts_by_model"]["tiny_mamba_ssm"][0]["month_label"] == "2022-07"
     assert result["derived_drivers_by_model"]["lstm"][0]["latent_biomass"] == 0.1
+    assert set(result["yield_trajectory_by_model"]) == {"lstm", "gru", "tiny_mamba_ssm", "transformer_encoder"}
 
 
 def test_tiny_mamba_ssm_architecture_is_supported() -> None:
@@ -132,3 +187,49 @@ def test_tiny_mamba_ssm_checkpoint_loads_without_legacy_script() -> None:
 
     assert model.__class__.__name__ == "PINNForecaster"
     assert hasattr(model, "forward_with_latents")
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_path", "scaler_path", "config_path", "model_name"),
+    [
+        (
+            Path("training/runs/mamba_best/tiny_mamba_ssm/checkpoint.pt"),
+            Path("training/runs/mamba_best/scaler.csv"),
+            Path("training/runs/mamba_best/config.json"),
+            "tiny_mamba_ssm",
+        ),
+        (
+            Path("training/runs/gru_best/gru/checkpoint.pt"),
+            Path("training/runs/gru_best/scaler.csv"),
+            Path("training/runs/gru_best/config.json"),
+            "gru",
+        ),
+        (
+            Path("training/runs/lstm_best/lstm/checkpoint.pt"),
+            Path("training/runs/lstm_best/scaler.csv"),
+            Path("training/runs/lstm_best/config.json"),
+            "lstm",
+        ),
+        (
+            Path("training/runs/transformer_best/transformer_encoder/checkpoint.pt"),
+            Path("training/runs/transformer_best/scaler.csv"),
+            Path("training/runs/transformer_best/config.json"),
+            "transformer_encoder",
+        ),
+    ],
+)
+def test_trained_artifacts_use_6_month_context_window(
+    checkpoint_path: Path,
+    scaler_path: Path,
+    config_path: Path,
+    model_name: str,
+) -> None:
+    predictor = BlankFillPredictor.from_artifacts(
+        checkpoint_path,
+        scaler_path,
+        config_path,
+        device="cpu",
+        model_name=model_name,
+    )
+
+    assert predictor.seq_len == 6

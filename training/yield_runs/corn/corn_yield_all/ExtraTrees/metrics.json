@@ -1,0 +1,19 @@
+{
+  "model_name": "ExtraTrees",
+  "model_type": "ml",
+  "val_metrics": {
+    "rmse": 22.97928660348544,
+    "mae": 20.016804509865732,
+    "mse": 528.0476128051255,
+    "r2": -0.8701537530641581
+  },
+  "test_metrics": {
+    "rmse": 19.748629475324872,
+    "mae": 16.331721998337798,
+    "mse": 390.0083661536703,
+    "r2": 0.15061710506405135
+  },
+  "selected_from_train_only": true,
+  "candidate_val_rmse": 22.97928660348544,
+  "status": "trained"
+}

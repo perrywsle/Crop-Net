@@ -2,6 +2,7 @@ const state = {
   config: null,
   latestResult: null,
   activeTab: "overview",
+  activeCrop: "corn",
   activeGroup: null,
   chat: {
     open: false,
@@ -66,6 +67,13 @@ const MODEL_STYLES = {
   gru: { stroke: "#d14b4b", fill: "#d14b4b", line: ":", marker: "s" },
   tiny_mamba_ssm: { stroke: "#7c4fd4", fill: "#7c4fd4", line: "-.", marker: "^" },
 };
+const TRAJECTORY_MODEL_ORDER = ["lstm", "gru", "tiny_mamba_ssm", "transformer_encoder"];
+const TRAJECTORY_MODEL_LABELS = {
+  lstm: "LSTM",
+  gru: "GRU",
+  tiny_mamba_ssm: "SSM",
+  transformer_encoder: "Attention",
+};
 const YIELD_MODEL_ORDER = [
   "current",
   "naive_lag1",
@@ -111,11 +119,71 @@ const YIELD_MODEL_STYLES = {
   ensemble_weighted: { stroke: "#8b5e34", line: "--" },
 };
 const YIELD_OUTLIER_LIMIT = 10000;
+const CROP_LABELS = {
+  corn: "Corn",
+  soybeans: "Soybean",
+};
+
+function cropLabel(cropType) {
+  return CROP_LABELS[cropType] || cropType?.replaceAll("_", " ") || "Crop";
+}
+
+function getAvailableCrops(result) {
+  const cropOrder = Array.isArray(result?.crop_order) ? result.crop_order : [];
+  if (cropOrder.length) {
+    return cropOrder.filter((crop) => result?.crops?.[crop]);
+  }
+  if (result?.crops && typeof result.crops === "object") {
+    return Object.keys(result.crops).filter((crop) => result.crops[crop]);
+  }
+  return [];
+}
+
+function getActiveCropKey(result = state.latestResult) {
+  const crops = getAvailableCrops(result);
+  if (!crops.length) {
+    return state.activeCrop;
+  }
+  if (!crops.includes(state.activeCrop)) {
+    return result?.active_crop || result?.default_crop || crops[0];
+  }
+  return state.activeCrop;
+}
+
+function getActiveCropResult(result = state.latestResult) {
+  if (!result?.crops || typeof result.crops !== "object") {
+    return result;
+  }
+  const activeCrop = getActiveCropKey(result);
+  return result.crops[activeCrop] || result;
+}
+
+function renderCropTabs() {
+  const result = state.latestResult;
+  const crops = getAvailableCrops(result);
+  const activeCrop = getActiveCropKey(result);
+  const markup = crops
+    .map(
+      (crop) => `
+        <button class="inner-tab ${crop === activeCrop ? "active" : ""}" data-crop="${crop}">
+          ${cropLabel(crop)}
+        </button>
+      `,
+    )
+    .join("");
+  ["#yieldCropTabs", "#detailsCropTabs"].forEach((selector) => {
+    const target = el(selector);
+    if (!target) return;
+    target.innerHTML = markup;
+    target.classList.toggle("hidden", crops.length <= 1);
+  });
+}
 
 function buildChatContextSnapshot(result) {
   if (!result) return {};
   return {
     headline: result.headline || {},
+    forecast_headline: result.forecast_headline || {},
     summary: {
       best_model: result.summary?.best_model || {},
       holdout: result.summary?.holdout || {},
@@ -146,6 +214,10 @@ function buildChatContextSnapshot(result) {
       month_label: item.month_label,
       predicted_yield: item.predicted_yield,
     })),
+    current_yield_trajectory: (result.yield_trajectory_by_model?.current || []).slice(-6).map((item) => ({
+      month_label: item.month_label,
+      predicted_yield: item.predicted_yield,
+    })),
     monthly_features: (result.monthly_features || []).slice(-4).map((item) => ({
       month_label: item.month_label,
       predicted_yield: item.predicted_yield,
@@ -154,22 +226,45 @@ function buildChatContextSnapshot(result) {
       label: item.label,
       importance: item.importance,
     })),
+    feature_model_best: result.feature_model_best || {},
+    feature_model_runs: (result.feature_model_runs || []).slice(0, 4).map((run) => ({
+      key: run.key,
+      label: run.label,
+      r2: run.r2,
+      val_r2: run.val_r2,
+      rmse: run.rmse,
+      val_rmse: run.val_rmse,
+      trainable_parameters: run.trainable_parameters,
+      target_mode: run.target_mode,
+    })),
+    feature_forecast_models: (result.feature_forecast_models || []).slice(0, 4).map((model) => ({
+      key: model.key,
+      label: model.label,
+      supports_latent_state: model.supports_latent_state,
+    })),
   };
 }
 
 function renderChatContext() {
   const target = el("#chatContextSummary");
   if (!target) return;
-  const headlineMonth = state.latestResult?.headline?.month_label
-    || (state.latestResult?.headline?.year && state.latestResult?.headline?.month
-      ? `${state.latestResult.headline.year}-${String(state.latestResult.headline.month).padStart(2, "0")}`
+  const activeResult = getActiveCropResult();
+  const headlineMonth = activeResult?.headline?.month_label
+    || (activeResult?.headline?.year && activeResult?.headline?.month
+      ? `${activeResult.headline.year}-${String(activeResult.headline.month).padStart(2, "0")}`
       : null);
   const headline = headlineMonth || "No prediction run yet";
-  const topDriver = state.latestResult?.drivers?.[0]?.label || "Not available";
+  const topDriver = activeResult?.drivers?.[0]?.label || "Not available";
+  const nextForecast = activeResult?.forecast_headline?.predicted_yield;
+  const nextForecastLabel = nextForecast !== undefined && nextForecast !== null
+    ? `${formatValue(nextForecast)} ${activeResult?.forecast_headline?.unit || ""}`.trim()
+    : "Not available";
   const rows = [
+    `Active crop: ${cropLabel(getActiveCropKey())}`,
     `Latest run: ${headline}`,
     `Top driver: ${topDriver}`,
-    `Monthly rows: ${(state.latestResult?.monthly_features || []).length}`,
+    `Next forecast: ${nextForecastLabel}`,
+    `Monthly rows: ${(activeResult?.monthly_features || []).length}`,
   ];
   target.innerHTML = rows.map((item) => `<div>${item}</div>`).join("");
 }
@@ -182,7 +277,7 @@ function renderChatMessages() {
     : [
         {
           role: "system",
-          content: "Ask about the current yield estimate, crop drivers, weather patterns, or what the model is seeing.",
+          content: "Ask what the yield estimate means, which signals are driving it, or what you should check next.",
         },
       ];
   target.innerHTML = messages
@@ -211,7 +306,7 @@ function renderChatStatusLine() {
   const info = state.chat.modelInfo || {};
   const contextLength = info.context_length || "Not reported";
   const lastStats = state.chat.lastStats || {};
-  const currentTokens = lastStats.input_tokens ?? estimateTokens(JSON.stringify(buildChatContextSnapshot(state.latestResult)));
+  const currentTokens = lastStats.input_tokens ?? estimateTokens(JSON.stringify(buildChatContextSnapshot(getActiveCropResult())));
   const tokensPerSecond = lastStats.tokens_per_second;
   target.innerHTML = `
     <strong>${state.chat.selectedModel || "Select a model"}</strong>
@@ -307,7 +402,7 @@ async function submitChat(event) {
     body: JSON.stringify({
       model: state.chat.selectedModel,
       messages: buildChatMessages(),
-      dashboard_context: buildChatContextSnapshot(state.latestResult),
+      dashboard_context: buildChatContextSnapshot(getActiveCropResult()),
     }),
   });
   if (!response.ok) {
@@ -870,7 +965,7 @@ function renderModelQualityCard(result) {
 
   if (!runs.length) {
     summaryTarget.innerHTML = `<div class="model-quality-empty">No trained feature runs were found under <code>training/runs/</code>.</div>`;
-    subTarget.textContent = "The dashboard will use the best available trained model once runs are present.";
+    subTarget.textContent = "";
     return;
   }
 
@@ -901,10 +996,7 @@ function renderModelQualityCard(result) {
       `;
     })
     .join("");
-  subTarget.textContent = bestRun
-    ? `Best trained run: ${bestRun.label || bestRun.key || "Model"} · ` +
-      `test R2 ${formatValue(bestRun.r2)} · val R2 ${formatValue(bestRun.val_r2)}`
-    : "Trained feature model metrics loaded from training/runs/.";
+  subTarget.textContent = "";
 }
 
 function renderDerivedDriverPanel(result) {
@@ -1127,6 +1219,7 @@ function renderBenchmarkTable(result) {
   const holdout = benchmark.holdout || {};
   const featureRuns = (result.feature_model_runs || []).slice();
   const benchmarkRows = [
+    ["Crop", cropLabel(result.crop_type || getActiveCropKey(result))],
     ["Current model", benchmark.model_name || "Not available"],
     ["Feature count", benchmark.feature_count !== null && benchmark.feature_count !== undefined ? formatValue(benchmark.feature_count, "integer") : "Not available"],
     ["Target units", benchmark.target_units || "Not available"],
@@ -1231,18 +1324,17 @@ function renderCharts(result) {
   const trajectorySeriesByModel = result.yield_trajectory_by_model || {};
   const historyBoundaryLabel = currentSeries.length ? resolveMonthLabel(currentSeries[currentSeries.length - 1]) : "";
   const displayYieldModels = {};
-  Object.entries(trajectorySeriesByModel).forEach(([key, series]) => {
-    if (key === "current") return;
+  TRAJECTORY_MODEL_ORDER.forEach((key) => {
+    const series = trajectorySeriesByModel[key];
+    if (!series) return;
     const trimmed = filterSeriesAfterLabel(series, historyBoundaryLabel);
-    if (trimmed.length && !isYieldSeriesOutlier(trimmed, currentSeries)) {
-      displayYieldModels[key] = trimmed;
-    }
+    displayYieldModels[key] = trimmed.length ? trimmed : series.slice();
   });
   const yieldLegendTarget = el("#yieldLegend");
   if (yieldLegendTarget) {
     yieldLegendTarget.innerHTML = [
       `<span class="legend-chip"><span class="legend-dot" style="background:${YIELD_MODEL_COLORS.current}"></span>History</span>`,
-      ...Object.entries(displayYieldModels).map(([key]) => `<span class="legend-chip"><span class="legend-dot" style="background:${YIELD_MODEL_COLORS[key] || "#7c4fd4"}"></span>${YIELD_MODEL_LABELS[key] || key}</span>`),
+      ...Object.entries(displayYieldModels).map(([key]) => `<span class="legend-chip"><span class="legend-dot" style="background:${YIELD_MODEL_COLORS[key] || "#7c4fd4"}"></span>${TRAJECTORY_MODEL_LABELS[key] || key}</span>`),
     ].join("");
   }
   drawMultiSeriesChart(
@@ -1274,8 +1366,8 @@ function renderCharts(result) {
     displayYieldModels,
     {
       id: "trajectoryChart",
-      modelOrder: ["naive_lag1", "seasonal_last_year", "lstm", "transformer_encoder", "gru", "tiny_mamba_ssm", "ensemble_mean", "ensemble_weighted"],
-      modelLabels: YIELD_MODEL_LABELS,
+      modelOrder: TRAJECTORY_MODEL_ORDER,
+      modelLabels: TRAJECTORY_MODEL_LABELS,
       modelColors: YIELD_MODEL_COLORS,
       modelStyles: YIELD_MODEL_STYLES,
       showXAxisLabels: true,
@@ -1301,15 +1393,23 @@ function renderHeadline(result) {
   el("#dataCoverage").textContent = `${(result.monthly_features || []).length} monthly rows`;
 }
 
-function renderResult(result) {
+function renderResult(result, options = {}) {
   state.latestResult = result;
+  const crops = getAvailableCrops(result);
+  if (!options.keepActiveCrop) {
+    state.activeCrop = result?.active_crop || result?.default_crop || crops[0] || state.activeCrop;
+  } else if (crops.length && !crops.includes(state.activeCrop)) {
+    state.activeCrop = result?.active_crop || result?.default_crop || crops[0];
+  }
+  const activeResult = getActiveCropResult(result);
   showPanels(true);
-  renderHeadline(result);
-  renderSummaryList(result);
-  renderCharts(result);
-  renderBenchmarkTable(result);
-  renderFeatureTable(result);
-  renderFeatureGroups(result);
+  renderCropTabs();
+  renderHeadline(activeResult);
+  renderSummaryList(activeResult);
+  renderCharts(activeResult);
+  renderBenchmarkTable(activeResult);
+  renderFeatureTable(activeResult);
+  renderFeatureGroups(activeResult);
   renderChatContext();
   renderChatStatusLine();
   setStatus("Prediction complete", "The yield estimate, drivers, and grouped charts are ready.");
@@ -1331,16 +1431,12 @@ async function waitForJob(jobId) {
 
 async function submitUpload(event) {
   event.preventDefault();
-  const form = event.currentTarget;
-  const formData = new FormData(form);
-  const cropType = formData.get("crop_type");
   const files = el("#folderInput").files;
   if (!files || files.length === 0) {
     throw new Error("Choose a folder of farm files first.");
   }
 
   const upload = new FormData();
-  upload.set("crop_type", cropType);
   const paths = [];
   Array.from(files).forEach((file) => {
     upload.append("files", file);
@@ -1382,6 +1478,21 @@ function wireTabs() {
     if (!button) return;
     state.activeGroup = button.dataset.group;
     renderFeatureGroups(state.latestResult);
+  });
+
+  ["#yieldCropTabs", "#detailsCropTabs"].forEach((selector) => {
+    const target = el(selector);
+    if (!target) return;
+    target.addEventListener("click", (event) => {
+      const button = event.target.closest(".inner-tab");
+      if (!button?.dataset?.crop) return;
+      state.activeCrop = button.dataset.crop;
+      if (state.latestResult) {
+        renderResult(state.latestResult, { keepActiveCrop: true });
+      } else {
+        renderCropTabs();
+      }
+    });
   });
 }
 

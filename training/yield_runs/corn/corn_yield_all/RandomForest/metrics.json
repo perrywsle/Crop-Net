@@ -1,0 +1,19 @@
+{
+  "model_name": "RandomForest",
+  "model_type": "ml",
+  "val_metrics": {
+    "rmse": 23.95413765274651,
+    "mae": 20.622781099679898,
+    "mse": 573.800710686728,
+    "r2": -1.032194685818395
+  },
+  "test_metrics": {
+    "rmse": 19.591471041551966,
+    "mae": 15.94794207084925,
+    "mse": 383.8257375719693,
+    "r2": 0.1640819930479409
+  },
+  "selected_from_train_only": true,
+  "candidate_val_rmse": 23.95413765274651,
+  "status": "trained"
+}

@@ -69,3 +69,5 @@ id_ed25519
 /data/cache
 .vscode/settings.json
 /data/raw
+/data/sample_data
+/data/sample_data

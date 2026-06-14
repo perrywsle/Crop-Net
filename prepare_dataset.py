@@ -17,6 +17,7 @@ from cropnet_forecasting.training_dataset import (
     DEFAULT_REPO_ID,
     DEFAULT_STATE_CODES,
     DEFAULT_YEARS,
+    normalize_crop_type,
     prepare_training_dataset_from_download,
 )
 
@@ -24,7 +25,12 @@ from cropnet_forecasting.training_dataset import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare a canonical CropNet training dataset.")
     parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT, help="Directory where downloaded CropNet raw data will be stored.")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Directory where train/val/test files will be written.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory where train/val/test files will be written. Defaults to a crop-specific subdirectory under the training root.",
+    )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR, help="Directory used for Hugging Face download cache.")
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face dataset repo id.")
     parser.add_argument("--crop-type", default=DEFAULT_CROP_TYPE, help="Crop filter applied to the downloaded CropNet data.")
@@ -40,9 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    crop_slug = (normalize_crop_type(args.crop_type) or str(args.crop_type)).replace(" ", "_")
+    output_dir = args.output_dir or (DEFAULT_OUTPUT_DIR / crop_slug)
     prepared = prepare_training_dataset_from_download(
         raw_root=args.raw_root,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         repo_id=args.repo_id,
         crop_type=args.crop_type,
         state_codes=args.state_codes,

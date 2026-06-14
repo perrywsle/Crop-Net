@@ -93,6 +93,9 @@ def build_dashboard_context(result: dict[str, Any] | None) -> dict[str, Any]:
     if not result:
         return {}
     monthly_features = result.get("monthly_features") or []
+    forecast_headline = result.get("forecast_headline") or {}
+    yield_trajectory = result.get("yield_trajectory_by_model") or {}
+    current_trajectory = yield_trajectory.get("current") or next(iter(yield_trajectory.values()), [])
     feature_groups = []
     for group in result.get("feature_groups") or []:
         if not isinstance(group, dict):
@@ -102,12 +105,14 @@ def build_dashboard_context(result: dict[str, Any] | None) -> dict[str, Any]:
             if not isinstance(feature, dict):
                 continue
             series = feature.get("series") or []
+            recent_values = [item.get("value") for item in series[-3:] if isinstance(item, dict)]
             features.append(
                 {
                     "label": feature.get("label"),
                     "description": feature.get("description"),
                     "latest_value": feature.get("latest_value"),
-                    "recent": [item.get("value") for item in series[-3:] if isinstance(item, dict)],
+                    "recent": recent_values,
+                    "trend": _series_trend(recent_values),
                 }
             )
         feature_groups.append(
@@ -119,20 +124,53 @@ def build_dashboard_context(result: dict[str, Any] | None) -> dict[str, Any]:
         )
         if len(feature_groups) >= 3:
             break
+
+    drivers = []
+    for index, driver in enumerate((result.get("drivers") or [])[:3], start=1):
+        if not isinstance(driver, dict):
+            continue
+        drivers.append(
+            {
+                "rank": index,
+                "label": driver.get("label"),
+                "description": driver.get("description"),
+                "importance": driver.get("importance"),
+                "group": driver.get("group"),
+                "group_label": driver.get("group_label"),
+            }
+        )
+
+    yield_series = []
+    for index, item in enumerate((result.get("yield_series") or [])[-6:], start=1):
+        if not isinstance(item, dict):
+            continue
+        yield_series.append(
+            {
+                "month_label": item.get("month_label"),
+                "predicted_yield": item.get("predicted_yield"),
+                "change_from_previous": _delta_value(
+                    item.get("predicted_yield"),
+                    yield_series[-1]["predicted_yield"] if yield_series else None,
+                ),
+            }
+        )
+
     return {
         "headline": result.get("headline") or {},
         "summary": {
             "best_model": (result.get("summary") or {}).get("best_model") or {},
             "holdout": (result.get("summary") or {}).get("holdout") or {},
         },
-        "drivers": (result.get("drivers") or [])[:3],
+        "forecast_headline": forecast_headline,
+        "drivers": drivers,
         "feature_groups": feature_groups,
-        "yield_series": [
+        "yield_series": yield_series,
+        "current_yield_trajectory": [
             {
                 "month_label": item.get("month_label"),
                 "predicted_yield": item.get("predicted_yield"),
             }
-            for item in (result.get("yield_series") or [])[-6:]
+            for item in current_trajectory[-6:]
             if isinstance(item, dict)
         ],
         "monthly_features": [
@@ -151,7 +189,63 @@ def build_dashboard_context(result: dict[str, Any] | None) -> dict[str, Any]:
             for item in (result.get("feature_importance") or [])[:5]
             if isinstance(item, dict)
         ],
+        "feature_model_best": result.get("feature_model_best") or {},
+        "feature_model_runs": [
+            {
+                "key": item.get("key"),
+                "label": item.get("label"),
+                "r2": item.get("r2"),
+                "val_r2": item.get("val_r2"),
+                "rmse": item.get("rmse"),
+                "val_rmse": item.get("val_rmse"),
+                "trainable_parameters": item.get("trainable_parameters"),
+                "target_mode": item.get("target_mode"),
+            }
+            for item in (result.get("feature_model_runs") or [])[:4]
+            if isinstance(item, dict)
+        ],
+        "feature_forecast_models": [
+            {
+                "key": item.get("key"),
+                "label": item.get("label"),
+                "supports_latent_state": item.get("supports_latent_state"),
+            }
+            for item in (result.get("feature_forecast_models") or [])[:4]
+            if isinstance(item, dict)
+        ],
     }
+
+
+def _delta_value(current: Any, previous: Any) -> float | None:
+    try:
+        if current is None or previous is None:
+            return None
+        return float(current) - float(previous)
+    except (TypeError, ValueError):
+        return None
+
+
+def _series_trend(values: list[Any]) -> str | None:
+    numeric: list[float] = []
+    for value in values:
+        try:
+            if value is None:
+                continue
+            numeric.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if len(numeric) < 2:
+        return None
+    start = numeric[0]
+    end = numeric[-1]
+    delta = end - start
+    scale = max(abs(start), abs(end), 1.0)
+    threshold = scale * 0.03
+    if delta > threshold:
+        return "rising"
+    if delta < -threshold:
+        return "falling"
+    return "stable"
 
 
 def _to_messages(turns: Iterable[dict[str, Any] | ChatTurn]) -> list[BaseMessage]:
@@ -175,11 +269,14 @@ def _to_messages(turns: Iterable[dict[str, Any] | ChatTurn]) -> list[BaseMessage
 def _system_prompt(dashboard_context: dict[str, Any]) -> str:
     context_blob = json.dumps(dashboard_context, ensure_ascii=False, default=str, separators=(",", ":"))
     return (
-        "You are TaoCrop Chat, a practical farm assistant.\n"
-        "Use the provided dashboard snapshot as the source of truth.\n"
-        "Answer clearly in 2 to 5 sentences. Do not reply with one word.\n"
-        "Avoid technical jargon unless the user asks for it, and explain model-related ideas in plain language.\n"
-        "If the answer is not available in the snapshot, say what is missing instead of guessing.\n"
+        "You are TaoCrop Advisor, a practical farm assistant for farmers.\n"
+        "Your job is to explain the dashboard in plain language and turn it into useful next-step guidance.\n"
+        "Use only the dashboard snapshot and the conversation history. Do not invent field conditions, weather, or crop actions.\n"
+        "If the snapshot does not support a claim, say that you cannot tell from the current dashboard snapshot.\n"
+        "Answer with one short opening sentence, then 2 to 4 bullets.\n"
+        "When the user asks for recommendations, include 1 to 3 prioritized actions or things to monitor next.\n"
+        "Keep advice conservative and practical. Avoid jargon unless you define it simply.\n"
+        "Do not mention being an AI or a model unless the user asks.\n"
         "Dashboard snapshot:\n"
         f"{context_blob}"
     )

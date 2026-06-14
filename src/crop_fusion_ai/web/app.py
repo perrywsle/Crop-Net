@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from crop_fusion_ai.gui.forecasting import build_forecast_from_monthly_features
 from crop_fusion_ai.web.chat import (
     build_dashboard_context,
     chat_with_ollama,
@@ -27,14 +28,73 @@ from crop_fusion_ai.web.chat import (
     model_info,
 )
 from crop_fusion_ai.web.feature_labels import FEATURE_GROUPS, label_payload
-from crop_fusion_ai.web.service import YieldModelService
+from crop_fusion_ai.web.service import (
+    DEFAULT_FEATURE_FORECAST_CHECKPOINT,
+    DEFAULT_FEATURE_FORECAST_CONFIG,
+    DEFAULT_FEATURE_FORECAST_SCALER,
+    YieldModelService,
+)
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 UPLOAD_STAGE_DIR = Path(__file__).resolve().parents[3] / "data" / "cache" / "web_uploads"
-MAX_UPLOAD_FILES = 10000
-MAX_UPLOAD_FIELDS = 1000
+MAX_UPLOAD_FILES = 10000000
+MAX_UPLOAD_FIELDS = 1000000
 MAX_UPLOAD_PART_SIZE = 25 * 1024 * 1024
+CROP_SERVICE_CONFIGS = {
+    "corn": {
+        "model_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "corn"
+        / "corn_yield_all"
+        / "best_yield_model.joblib",
+        "metadata_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "corn"
+        / "corn_yield_all"
+        / "report.json",
+        "feature_importance_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "corn"
+        / "corn_yield_all"
+        / "yield_feature_importance.csv",
+        "benchmark_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "corn"
+        / "corn_yield_all"
+        / "window_benchmark.csv",
+    },
+    "soybeans": {
+        "model_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "soybeans"
+        / "soybeans_yield_all"
+        / "best_yield_model.joblib",
+        "metadata_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "soybeans"
+        / "soybeans_yield_all"
+        / "report.json",
+        "feature_importance_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "soybeans"
+        / "soybeans_yield_all"
+        / "yield_feature_importance.csv",
+        "benchmark_path": Path(__file__).resolve().parents[3]
+        / "training"
+        / "yield_runs"
+        / "soybeans"
+        / "soybeans_yield_all"
+        / "window_benchmark.csv",
+    },
+}
 
 
 class ChatMessagePayload(BaseModel):
@@ -110,7 +170,16 @@ class JobStore:
 
 class YieldWebApp:
     def __init__(self) -> None:
-        self.service = YieldModelService()
+        self.crop_services = {
+            crop_type: YieldModelService(
+                model_path=spec["model_path"],
+                metadata_path=spec["metadata_path"],
+                feature_importance_path=spec["feature_importance_path"],
+                benchmark_path=spec["benchmark_path"],
+            )
+            for crop_type, spec in CROP_SERVICE_CONFIGS.items()
+        }
+        self.service = self.crop_services["corn"]
         self.jobs = JobStore()
 
     def submit_directory_job(
@@ -125,7 +194,7 @@ class YieldWebApp:
         def run() -> None:
             try:
                 self.jobs.update(job.job_id, status="running", progress=5, message="Starting analysis")
-                result = builder(self.service, self.jobs, job.job_id, county_id, crop_type)
+                result = builder(self.crop_services, self.jobs, job.job_id, county_id, crop_type)
                 self.jobs.update(
                     job.job_id,
                     status="completed",
@@ -168,14 +237,15 @@ def _write_uploaded_folder(upload_dir: Path, uploads: list[UploadedBlob]) -> Non
         destination.write_bytes(upload.content)
 
 
-def _stage_uploaded_folder(uploads: list[UploadedBlob], *, county_id: str, crop_type: str) -> Path:
+def _stage_uploaded_folder(uploads: list[UploadedBlob], *, county_id: str, crop_type: str | None = None) -> Path:
     if not uploads:
         raise ValueError("No files were uploaded")
 
     digest = hashlib.sha256()
     digest.update(county_id.encode("utf-8"))
     digest.update(b"\0")
-    digest.update(crop_type.encode("utf-8"))
+    if crop_type:
+        digest.update(crop_type.encode("utf-8"))
     for upload in uploads:
         digest.update(b"\0")
         digest.update(upload.relative_path.encode("utf-8"))
@@ -214,7 +284,7 @@ def _collect_uploaded_blobs(files: list[UploadFile], relative_paths: list[str]) 
 
 
 def _build_upload_result(
-    service: YieldModelService,
+    services: dict[str, YieldModelService],
     jobs: JobStore,
     job_id: str,
     county_id: str,
@@ -222,13 +292,62 @@ def _build_upload_result(
     *,
     uploads: list[UploadedBlob],
 ) -> dict[str, Any]:
-    staged_dir = _stage_uploaded_folder(uploads, county_id=county_id, crop_type=crop_type)
+    staged_dir = _stage_uploaded_folder(uploads, county_id=county_id)
 
     def progress(stage: str, current: int, total: int, message: str) -> None:
         percent = 10 if total <= 0 else int((current / total) * 80 / max(total, 1)) + 10
         jobs.update(job_id, progress=min(95, max(10, percent)), message=message)
 
-    return service.predict_from_directory(staged_dir, county_id=county_id, crop_type=crop_type, progress=progress)
+    shared_service = services.get("corn") or next(iter(services.values()))
+    monthly_features, source_files = shared_service.build_monthly_frame(
+        staged_dir,
+        county_id=county_id,
+        crop_type=crop_type,
+        progress=progress,
+    )
+    prepared_monthly_features = shared_service.prepare_monthly_frame(monthly_features)
+    feature_forecasts = build_forecast_from_monthly_features(
+        monthly_features,
+        source_files,
+        county_id=county_id,
+        crop_type=crop_type,
+        checkpoint_path=DEFAULT_FEATURE_FORECAST_CHECKPOINT,
+        scaler_path=DEFAULT_FEATURE_FORECAST_SCALER,
+        config_path=DEFAULT_FEATURE_FORECAST_CONFIG,
+        progress=progress,
+    )
+    crop_order = [crop for crop in ("corn", "soybeans") if crop in services]
+    crop_payloads: dict[str, Any] = {}
+    for crop in crop_order:
+        service = services[crop]
+        crop_prepared_monthly_features = prepared_monthly_features.copy()
+        if "crop_type" in crop_prepared_monthly_features.columns:
+            crop_prepared_monthly_features["crop_type"] = crop
+
+        def crop_progress(stage: str, current: int, total: int, message: str, *, crop_name: str = crop) -> None:
+            progress(stage, current, total, f"{crop_name.title()}: {message}")
+
+        payload = service.predict_from_directory(
+            staged_dir,
+            county_id=county_id,
+            crop_type=crop,
+            progress=crop_progress,
+            preprocessed=(monthly_features, source_files),
+            prepared_monthly_frame=crop_prepared_monthly_features,
+            feature_forecasts=feature_forecasts,
+        )
+        payload["crop_type"] = crop
+        crop_payloads[crop] = payload
+
+    primary_crop = "corn" if "corn" in crop_payloads else next(iter(crop_payloads))
+    primary_payload = dict(crop_payloads[primary_crop])
+    primary_payload["crop_type"] = primary_crop
+    primary_payload["default_crop"] = primary_crop
+    primary_payload["active_crop"] = primary_crop
+    primary_payload["crop_order"] = crop_order
+    primary_payload["crop_labels"] = {"corn": "Corn", "soybeans": "Soybean"}
+    primary_payload["crops"] = crop_payloads
+    return primary_payload
 
 
 def create_app() -> FastAPI:
@@ -296,12 +415,10 @@ def create_app() -> FastAPI:
         )
 
         county_id = str(form.get("county_id") or "19001").strip()
-        crop_type = str(form.get("crop_type") or "").strip()
+        crop_type = str(form.get("crop_type") or "corn").strip() or "corn"
         relative_paths = str(form.get("relative_paths") or "[]")
         files = form.getlist("files")
 
-        if not crop_type:
-            raise HTTPException(status_code=400, detail="crop_type is required")
         if not files:
             raise HTTPException(status_code=400, detail="No files were uploaded")
         try:
@@ -318,8 +435,8 @@ def create_app() -> FastAPI:
         job = web.submit_directory_job(
             county_id=county_id,
             crop_type=crop_type,
-            builder=lambda service, jobs, job_id, county_id, crop_type: _build_upload_result(
-                service,
+            builder=lambda services, jobs, job_id, county_id, crop_type: _build_upload_result(
+                services,
                 jobs,
                 job_id,
                 county_id,

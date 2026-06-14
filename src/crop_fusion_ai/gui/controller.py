@@ -15,7 +15,7 @@ from crop_fusion_ai.preprocessing.weather import extract_weather_features
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CACHE_DIR = ROOT / "data" / "cache" / "gui_features"
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)

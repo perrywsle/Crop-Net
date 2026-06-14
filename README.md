@@ -68,10 +68,11 @@ The app scans the directory recursively, extracts monthly features, and shows yi
 python fetch_data.py --county-id 01003 --crop corn --years 2017 2018 2019 2020 2021 2022
 ```
 
-### Direct Corn IA yield baseline
+### Direct Corn and Soybean IA yield baseline
 Fetch USDA labels without downloading imagery or weather chunks:
 ```bash
-python fetch_data.py --labels-only --crop corn --years 2017 2018 2019 2020 2021 2022 --output-dir data/usda_labels
+python fetch_data.py --labels-only --crop corn --years 2017 2018 2019 2020 2021 2022 --output-dir data/usda_labels/corn
+python fetch_data.py --labels-only --crop soybeans --years 2017 2018 2019 2020 2021 2022 --output-dir data/usda_labels/soybeans
 ```
 
 Create a label-driven county batch manifest and extraction commands for the
@@ -118,20 +119,38 @@ python src/cropnet_forecasting/yield_batching.py merge \
 Prepare the canonical official yield dataset:
 ```bash
 python prepare_yield_dataset.py \
-  --output-dir data/yield_training \
-  --source-dataset-dir data/training
+  --crop-type corn \
+  --source-dataset-dir data/training/corn \
+  --output-dir data/yield_training/corn
+
+python prepare_yield_dataset.py \
+  --crop-type soybeans \
+  --source-dataset-dir data/training/soybeans \
+  --output-dir data/yield_training/soybeans
 ```
 
 Train the official yield models from the prepared split:
 ```bash
 python feature_training.py \
-  --dataset-dir data/yield_training \
-  --output-dir training/yield_runs \
-  --run-name yield_all \
+  --dataset-dir data/yield_training/corn \
+  --output-dir training/yield_runs/corn \
+  --run-name corn_yield_all \
+  --models all
+
+python feature_training.py \
+  --dataset-dir data/yield_training/soybeans \
+  --output-dir training/yield_runs/soybeans \
+  --run-name soybeans_yield_all \
   --models all
 ```
 
-The yield prep step copies each county-year USDA annual yield onto the monthly rows already stored in `data/training`, then writes `all/train/val/test.parquet` plus `metadata.json`. The training step benchmarks Ridge, RandomForest, ExtraTrees, and the baseline predictors, writes per-model predictions and metrics, and saves the best trainable model as `best_yield_model.joblib`.
+The yield prep step copies each county-year USDA annual yield onto the monthly rows already stored in the crop-specific prepared monthly dataset, then writes `all/train/val/test.parquet` plus `metadata.json`. The training step benchmarks Ridge, RandomForest, ExtraTrees, and the baseline predictors, writes per-model predictions and metrics, and saves the best trainable model as `best_yield_model.joblib`.
+
+If you are preparing the upstream monthly data from raw CropNet exports, use crop-specific output directories there as well:
+```bash
+python prepare_dataset.py --output-dir data/training/corn --raw-root data/raw/cropnet --crop-type corn --state-codes IA --years 2017 2018 2019 2020 2021 2022 --train-years 2017 2018 2019 2020 --val-years 2021 --test-years 2022
+python prepare_dataset.py --output-dir data/training/soybeans --raw-root data/raw/cropnet --crop-type soybeans --state-codes IA --years 2017 2018 2019 2020 2021 2022 --train-years 2017 2018 2019 2020 --val-years 2021 --test-years 2022
+```
 
 The legacy direct entrypoint still exists for compatibility, but the new `prepare_yield_dataset.py` plus `feature_training.py` flow is the recommended path.
 
@@ -197,7 +216,7 @@ Do not commit raw datasets, `raw_chunks/`, `feature_cache/`, HDF5 files, virtual
 
 ## Iowa Corn Monthly Yield Prediction Results
 
-This project trains an Iowa Corn yield prediction model using monthly CropNet AG, NDVI, and weather features joined with USDA county-level annual corn yield labels. The current full experiment uses Iowa Corn data from 2017-2022, trains on 2017-2021, and tests on 2022.
+This project trains crop-specific Iowa Corn and Soybean yield prediction models using monthly CropNet AG, NDVI, and weather features joined with USDA county-level annual yield labels. The current full experiments use Iowa data from 2017-2022, train on 2017-2021, and test on 2022.
 
 The yield task is built at monthly grain: each `county_id`, `crop_type`, `year`, and `month` row receives the USDA annual yield label for that county-year. This lets the model estimate final annual yield from one month or a month window while still using ground-truth monthly CropNet features only.
 
@@ -220,7 +239,7 @@ December 2022 features -> label 164.2
 The model therefore learns this mapping:
 
 ```text
-monthly AG + NDVI + weather features + month timing -> final annual corn yield
+monthly AG + NDVI + weather features + month timing -> final annual crop yield
 ```
 
 This design allows early-season or partial-window prediction. For example, the same trained model can be evaluated on January-only rows, Jan-Mar rows, Apr-Jun rows, Apr-Sep rows, or the full year. The split remains year-based, with 2017-2021 used for training and 2022 held out for testing, so duplicated monthly labels from the same county-year do not leak across train and test.

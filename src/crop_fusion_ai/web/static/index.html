@@ -54,15 +54,6 @@
           </div>
 
           <form id="uploadForm" class="upload-form">
-            <label class="field">
-              <span>Crop</span>
-              <select name="crop_type">
-                <option value="corn" selected>Corn</option>
-                <option value="cotton">Cotton</option>
-                <option value="soybeans">Soybeans</option>
-                <option value="winter wheat">Winter wheat</option>
-              </select>
-            </label>
             <label class="field grow">
               <span>Folder of farm files</span>
               <input id="folderInput" type="file" webkitdirectory directory multiple />
@@ -86,11 +77,6 @@
             <div class="headline-subtitle" id="headlineMonth">Waiting for data</div>
           </article>
           <article class="card result-card">
-            <div class="card-topline">Model quality</div>
-            <div id="modelQuality" class="model-quality-summary"></div>
-            <div class="metric-sub" id="modelQualitySub">Loaded from the trained feature models in `training/runs/`.</div>
-          </article>
-          <article class="card result-card">
             <div class="card-topline">Top driver</div>
             <div class="metric" id="topDriver">--</div>
             <div class="metric-sub">Most influential feature in the saved model.</div>
@@ -99,6 +85,11 @@
             <div class="card-topline">Data coverage</div>
             <div class="metric" id="dataCoverage">--</div>
             <div class="metric-sub">How many monthly rows were prepared for the model.</div>
+          </article>
+          <article class="card result-card quality">
+            <div class="card-topline">Model quality</div>
+            <div id="modelQuality" class="model-quality-summary"></div>
+            <div class="metric-sub" id="modelQualitySub"></div>
           </article>
         </section>
 
@@ -124,6 +115,7 @@
           </section>
 
           <section class="panel" id="yieldPanel">
+            <div id="yieldCropTabs" class="inner-tabs"></div>
             <div class="panel-grid single">
               <article class="card panel-card">
                 <h3>Monthly yield trajectory</h3>
@@ -151,6 +143,7 @@
           </section>
 
           <section class="panel" id="detailsPanel">
+            <div id="detailsCropTabs" class="inner-tabs"></div>
             <div class="panel-grid single vertical">
               <article class="card panel-card">
                 <h3>Benchmark summary</h3>

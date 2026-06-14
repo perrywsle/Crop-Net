@@ -1,9 +1,0 @@
-model,model_type,checkpoint_path,history_path,predictions_path,trainable_parameters,total_parameters,status
-lstm,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/lstm/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/lstm/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/lstm/test_predictions.csv,58848,58848,trained
-gru,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/gru/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/gru/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/gru/test_predictions.csv,46080,46080,trained
-transformer_encoder,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/transformer_encoder/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/transformer_encoder/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/transformer_encoder/test_predictions.csv,172224,172224,trained
-tiny_mamba_ssm,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/tiny_mamba_ssm/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/tiny_mamba_ssm/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/tiny_mamba_ssm/test_predictions.csv,58432,58432,trained
-naive_lag1,baseline,,,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/naive_lag1/test_predictions.csv,0,0,evaluated
-seasonal_last_year,baseline,,,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/seasonal_last_year/test_predictions.csv,0,0,evaluated
-ensemble_mean,ensemble,,,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/ensemble/ensemble_mean_test_predictions.csv,0,0,evaluated
-ensemble_weighted,ensemble,,,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all_max/ensemble/ensemble_weighted_test_predictions.csv,0,0,evaluated

@@ -17,6 +17,7 @@ from cropnet_forecasting.yield_training import (
     load_prepared_yield_dataset,
     train_yield_models,
 )
+from cropnet_forecasting.yield_regression import normalize_crop_type
 
 YIELD_MODEL_FAMILIES = ("Ridge", "RandomForest", "ExtraTrees")
 OPTIONAL_YIELD_MODELS = ("XGBoost", "LightGBM")
@@ -42,16 +43,22 @@ def _resolve_models(requested: list[str], *, include_optional_models: bool) -> l
     return resolved
 
 
-def _make_run_dir(output_dir: Path, run_name: str | None, models: list[str]) -> Path:
+def _make_run_dir(output_dir: Path, run_name: str | None, models: list[str], crop_type: str | None) -> Path:
+    crop_slug = (normalize_crop_type(crop_type) or "mixed").replace(" ", "_")
     if run_name is None:
-        run_name = f"{'_'.join(m.lower() for m in models)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        run_name = f"{crop_slug}_{'_'.join(m.lower() for m in models)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return output_dir / run_name
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train official CropNet yield regressors from a prepared dataset.")
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_YIELD_DATASET_DIR)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_YIELD_RUNS_DIR)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory where yield runs will be written. Defaults to a crop-specific subdirectory under the yield run root.",
+    )
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--models", nargs="+", default=["all"])
     parser.add_argument("--tune-hyperparameters", action="store_true", default=True)
@@ -65,7 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     models = _resolve_models(args.models, include_optional_models=args.include_optional_models)
-    run_dir = _make_run_dir(args.output_dir, args.run_name, models)
+    prepared = load_prepared_yield_dataset(args.dataset_dir)
+    crop_type = str(prepared.metadata.get("crop_type") or "mixed")
+    crop_slug = (normalize_crop_type(crop_type) or "mixed").replace(" ", "_")
+    output_dir = args.output_dir or (DEFAULT_YIELD_RUNS_DIR / crop_slug)
+    run_dir = _make_run_dir(output_dir, args.run_name, models, crop_type)
     if run_dir.exists() and any(run_dir.iterdir()) and not args.overwrite:
         raise FileExistsError(
             f"Run directory already exists and is not empty: {run_dir}. "
@@ -73,7 +84,6 @@ def main(argv: list[str] | None = None) -> int:
         )
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    prepared = load_prepared_yield_dataset(args.dataset_dir)
     results, metadata = train_yield_models(
         prepared,
         run_dir=run_dir,

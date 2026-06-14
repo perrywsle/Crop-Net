@@ -14,6 +14,7 @@ from cropnet_forecasting.yield_training import (
     DEFAULT_YIELD_DATASET_DIR,
     prepare_yield_dataset,
 )
+from cropnet_forecasting.yield_regression import normalize_crop_type
 
 
 def _parse_years(values: list[str] | None) -> list[int] | None:
@@ -37,7 +38,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Legacy fallback: direct monthly feature table path. Prefer --source-dataset-dir.",
     )
     parser.add_argument("--usda-path", type=Path, nargs="+", action="append", default=None)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_YIELD_DATASET_DIR)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory where the prepared yield split will be written. Defaults to a crop-specific subdirectory under the yield training root.",
+    )
     parser.add_argument("--crop-type", type=str, default="corn")
     parser.add_argument(
         "--feature-group",
@@ -61,16 +67,18 @@ def flatten_usda_path_groups(usda_path_groups: list[list[Path]] | None) -> list[
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.overwrite:
+    crop_slug = (normalize_crop_type(args.crop_type) or str(args.crop_type)).replace(" ", "_")
+    output_dir = args.output_dir or (DEFAULT_YIELD_DATASET_DIR / crop_slug)
+    if output_dir.exists() and any(output_dir.iterdir()) and not args.overwrite:
         raise FileExistsError(
-            f"Output directory already exists and is not empty: {args.output_dir}. "
+            f"Output directory already exists and is not empty: {output_dir}. "
             "Re-run with --overwrite or choose a new --output-dir."
         )
     prepared = prepare_yield_dataset(
         source_dataset_dir=args.source_dataset_dir,
         monthly_path=args.monthly_path,
         usda_paths=flatten_usda_path_groups(args.usda_path),
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         crop_type=args.crop_type,
         feature_group=args.feature_group,
         train_years=_parse_years(args.train_years),

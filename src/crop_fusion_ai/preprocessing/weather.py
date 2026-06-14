@@ -28,7 +28,7 @@ class WeatherFeatureConfig:
 
 
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    "date": ("date", "datetime", "day"),
+    "date": ("date", "datetime"),
     "temperature_mean": (
         "temperature_mean",
         "temp_mean",
@@ -124,9 +124,6 @@ def extract_weather_features(
     config = config or WeatherFeatureConfig()
     frame = _normalize_weather_columns(load_weather_frame(weather_input))
 
-    if "date" not in frame.columns:
-        msg = "Weather data must include a date column"
-        raise ValueError(msg)
     if "temperature_mean" not in frame.columns and not (
         "temperature_max" in frame.columns and "temperature_min" in frame.columns
     ):
@@ -143,7 +140,9 @@ def extract_weather_features(
         if daily_mask.any():
             frame = frame[daily_mask].copy()
 
-    if "date" not in frame.columns:
+    if "date" in frame.columns:
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    else:
         year_column = _first_present_column(frame, ("year",))
         month_column = _first_present_column(frame, ("month",))
         day_column = _first_present_column(frame, ("day",))
@@ -161,8 +160,6 @@ def extract_weather_features(
         else:
             msg = "Weather data must include a date column or year/month/day columns"
             raise ValueError(msg)
-    else:
-        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date"]).copy()
     if frame.empty:
         msg = "Weather data does not contain any parseable dates"

@@ -19,11 +19,13 @@
     "patience": 20,
     "batch_size": 64,
     "dropout": 0.05,
+    "seq_len": 6,
     "learning_rate": 0.001,
     "weight_decay": 0.00005,
     "physics_weight": 0.03,
     "physics_warmup_epochs": 10,
-    "hidden_size": 96
+    "hidden_size": 96,
+    "overwrite": true
   },
   "jobs": [
     {
