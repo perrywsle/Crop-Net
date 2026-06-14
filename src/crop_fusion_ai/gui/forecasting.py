@@ -49,25 +49,26 @@ class DirectoryForecastResult:
     predictor: BlankFillPredictor
     source_files: list[DirectorySample]
     forecast_by_model: dict[str, pd.DataFrame]
+    derived_drivers_by_model: dict[str, pd.DataFrame]
     predictor_by_model: dict[str, BlankFillPredictor]
 
 
 MODEL_SPECS: dict[str, dict[str, str]] = {
     "lstm": {
         "label": "LSTM",
-        "checkpoint": "weights/lstm_best.pt",
+        "checkpoint": "training/runs/lstm_best/lstm/checkpoint.pt",
     },
     "transformer_encoder": {
         "label": "Transformer Encoder",
-        "checkpoint": "weights/transformer_encoder_best.pt",
+        "checkpoint": "training/runs/transformer_best/transformer_encoder/checkpoint.pt",
     },
     "gru": {
         "label": "GRU",
-        "checkpoint": "weights/gru_best.pt",
+        "checkpoint": "training/runs/gru_best/gru/checkpoint.pt",
     },
     "tiny_mamba_ssm": {
         "label": "Tiny Mamba SSM",
-        "checkpoint": "weights/tiny_mamba_ssm_best.pt",
+        "checkpoint": "training/runs/mamba_best/tiny_mamba_ssm/checkpoint.pt",
     },
 }
 
@@ -228,6 +229,7 @@ def build_monthly_features_from_directory(
         raise ValueError("The merged monthly feature table is empty.")
 
     monthly_features = monthly_features.sort_values(["county_id", "crop_type", "year", "month"]).reset_index(drop=True)
+    monthly_features = monthly_features[pd.to_numeric(monthly_features["year"], errors="coerce").fillna(0).astype(int) >= 2000].reset_index(drop=True)
     monthly_features["date"] = pd.to_datetime(
         monthly_features[["year", "month"]].assign(day=1)
     )
@@ -255,6 +257,7 @@ def build_forecast_from_monthly_features(
     from cropnet_forecasting.predictor import BlankFillPredictor
 
     forecast_by_model: dict[str, pd.DataFrame] = {}
+    derived_drivers_by_model: dict[str, pd.DataFrame] = {}
     predictor_by_model: dict[str, BlankFillPredictor] = {}
     default_predictor: BlankFillPredictor | None = None
     default_forecast: pd.DataFrame | None = None
@@ -286,8 +289,10 @@ def build_forecast_from_monthly_features(
         assert prepared is not None
         if progress is not None:
             progress("forecast", 0, horizon, f"Forecasting next {horizon} months with {spec['label']}")
-        model_forecast = predictor.predict_future_months(prepared, horizon=horizon, progress=progress)
+        model_forecast, latent_forecast = predictor.predict_future_months_with_latents(prepared, horizon=horizon, progress=progress)
         forecast_by_model[model_key] = model_forecast
+        if latent_forecast is not None and not latent_forecast.empty:
+            derived_drivers_by_model[model_key] = latent_forecast
         if default_forecast is None:
             default_forecast = model_forecast
         if progress is not None:
@@ -303,6 +308,7 @@ def build_forecast_from_monthly_features(
         predictor=default_predictor,
         source_files=source_files,
         forecast_by_model=forecast_by_model,
+        derived_drivers_by_model=derived_drivers_by_model,
         predictor_by_model=predictor_by_model,
     )
 

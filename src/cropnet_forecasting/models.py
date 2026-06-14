@@ -6,6 +6,9 @@ import types
 from pathlib import Path
 from typing import Any
 
+from .features import selected_feature_columns
+from .pinn import PINNForecaster
+
 try:  # Torch is only required when constructing or loading learned forecasters.
     import torch
     import torch.nn as nn
@@ -215,6 +218,67 @@ def infer_architecture_from_state_dict(model_name: str, state_dict: dict[str, An
         }
     raise ValueError(f"Architecture inference not implemented for model '{model_name}'")
 
+
+def _is_pinn_state_dict(state_dict: dict[str, Any]) -> bool:
+    return any(key.startswith("backbone.") for key in state_dict)
+
+
+def _strip_backbone_prefix(state_dict: dict[str, Any]) -> dict[str, Any]:
+    stripped: dict[str, Any] = {}
+    for key, value in state_dict.items():
+        if key.startswith("backbone."):
+            stripped[key.removeprefix("backbone.")] = value
+    return stripped
+
+
+def _infer_pinn_architecture_from_state_dict(model_name: str, state_dict: dict[str, Any]) -> dict[str, int | float]:
+    normalized_name = "tiny_mamba_ssm" if model_name == "gamma_ssm" else model_name
+    output_key = "forecast_head.2.bias"
+    latent_key = "latent_head.2.bias"
+    if output_key not in state_dict:
+        raise KeyError("Could not infer PINN output dimension from checkpoint")
+    if latent_key not in state_dict:
+        latent_key = "latent_head.2.weight"
+    if latent_key not in state_dict:
+        raise KeyError("Could not infer PINN latent dimension from checkpoint")
+
+    if normalized_name == "lstm":
+        return {
+            "input_dim": int(state_dict["backbone.lstm.weight_ih_l0"].shape[1]),
+            "output_dim": int(state_dict[output_key].shape[0]),
+            "hidden_size": int(state_dict["backbone.lstm.weight_hh_l0"].shape[1]),
+            "num_layers": len([key for key in state_dict if key.startswith("backbone.lstm.weight_ih_l")]),
+            "dropout": 0.0,
+        }
+    if normalized_name == "gru":
+        return {
+            "input_dim": int(state_dict["backbone.gru.weight_ih_l0"].shape[1]),
+            "output_dim": int(state_dict[output_key].shape[0]),
+            "hidden_size": int(state_dict["backbone.gru.weight_hh_l0"].shape[1]),
+            "num_layers": len([key for key in state_dict if key.startswith("backbone.gru.weight_ih_l")]),
+            "dropout": 0.0,
+        }
+    if normalized_name == "transformer_encoder":
+        return {
+            "input_dim": int(state_dict["backbone.input_proj.weight"].shape[1]),
+            "output_dim": int(state_dict[output_key].shape[0]),
+            "hidden_size": int(state_dict["backbone.input_proj.weight"].shape[0]),
+            "num_layers": len({key.split(".")[3] for key in state_dict if key.startswith("backbone.encoder.layers.")}) or 1,
+            "dropout": 0.0,
+        }
+    if normalized_name == "tiny_mamba_ssm":
+        block_keys = [key for key in state_dict if key.startswith("backbone.blocks.")]
+        if not block_keys and any(key.startswith("backbone.block.") for key in state_dict):
+            block_keys = [key for key in state_dict if key.startswith("backbone.block.")]
+        return {
+            "input_dim": int(state_dict["backbone.input_proj.weight"].shape[1]),
+            "output_dim": int(state_dict[output_key].shape[0]),
+            "hidden_size": int(state_dict["backbone.input_proj.weight"].shape[0]),
+            "num_layers": len({key.split(".")[2] for key in block_keys}) or 1,
+            "dropout": 0.0,
+        }
+    raise ValueError(f"Architecture inference not implemented for PINN model '{model_name}'")
+
 class CropNetModelFactory:
     @staticmethod
     def create(model_name: str, input_dim: int, output_dim: int, hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.0, seq_len: int = 6, legacy_script_path: str | Path | None = None) -> nn.Module:
@@ -230,13 +294,49 @@ class CropNetModelFactory:
         raise ValueError(f"Model '{model_name}' is not supported by the factory.")
 
     @staticmethod
-    def load_checkpoint(checkpoint_path: str | Path, model_name: str | None = None, device: str = "cpu", legacy_script_path: str | Path | None = None) -> nn.Module:
+    def load_checkpoint(
+        checkpoint_path: str | Path,
+        model_name: str | None = None,
+        device: str = "cpu",
+        legacy_script_path: str | Path | None = None,
+        *,
+        feature_names: list[str] | None = None,
+    ) -> nn.Module:
         _require_torch()
         checkpoint_path = Path(checkpoint_path)
         inferred_name = model_name or checkpoint_path.name.replace("_best.pt", "")
         normalized_name = "tiny_mamba_ssm" if inferred_name == "gamma_ssm" else inferred_name
         state = torch.load(checkpoint_path, map_location=device)
         state_dict = state.get("state_dict", state) if isinstance(state, dict) else state
+        pinn_state_dict = _is_pinn_state_dict(state_dict)
+        if pinn_state_dict:
+            params = _infer_pinn_architecture_from_state_dict(normalized_name, state_dict)
+            latent_param = state_dict.get("latent_head.2.bias")
+            if latent_param is None:
+                latent_param = state_dict.get("latent_head.2.weight")
+            if latent_param is None:
+                raise ValueError(f"Could not infer latent dimension from PINN checkpoint: {checkpoint_path}")
+            latent_state_dim = int(latent_param.shape[0])
+            pinn_feature_names = list(feature_names or selected_feature_columns("all"))
+            backbone = CropNetModelFactory.create(
+                normalized_name,
+                input_dim=int(params["input_dim"]),
+                output_dim=int(params["output_dim"]),
+                hidden_size=int(params["hidden_size"]),
+                num_layers=int(params["num_layers"]),
+                dropout=float(params.get("dropout", 0.0)),
+            )
+            model = PINNForecaster(
+                backbone,
+                pinn_feature_names,
+                input_dim=int(params["output_dim"]),
+                latent_state_dim=latent_state_dim,
+                dropout=float(params.get("dropout", 0.0)),
+            )
+            model.load_state_dict(state_dict)
+            model.to(device)
+            model.eval()
+            return model
         if normalized_name == "tiny_mamba_ssm":
             normalized_state_dict = {}
             for key, value in state_dict.items():

@@ -97,6 +97,9 @@ def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypat
                 "gru": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 3.0}]),
                 "tiny_mamba_ssm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", service.feature_names[0]: 4.0}]),
             },
+            derived_drivers_by_model={
+                "lstm": pd.DataFrame([{"year": 2022, "month": 7, "month_label": "2022-07", "latent_biomass": 0.1, "latent_phenology": 0.2, "latent_water": 0.3}]),
+            },
             predictor_by_model={key: SimpleNamespace(model_name=key) for key in ("lstm", "transformer_encoder", "gru", "tiny_mamba_ssm")},
         ),
     )
@@ -105,6 +108,7 @@ def test_predict_from_directory_includes_multi_model_feature_forecasts(monkeypat
 
     assert set(result["feature_forecasts_by_model"]) == {"lstm", "transformer_encoder", "gru", "tiny_mamba_ssm"}
     assert result["feature_forecasts_by_model"]["tiny_mamba_ssm"][0]["month_label"] == "2022-07"
+    assert result["derived_drivers_by_model"]["lstm"][0]["latent_biomass"] == 0.1
 
 
 def test_tiny_mamba_ssm_architecture_is_supported() -> None:
@@ -120,6 +124,11 @@ def test_tiny_mamba_ssm_architecture_is_supported() -> None:
 
 
 def test_tiny_mamba_ssm_checkpoint_loads_without_legacy_script() -> None:
-    model = CropNetModelFactory.load_checkpoint("weights/tiny_mamba_ssm_best.pt", model_name="tiny_mamba_ssm", device="cpu")
+    model = CropNetModelFactory.load_checkpoint(
+        "training/runs/mamba_best/tiny_mamba_ssm/checkpoint.pt",
+        model_name="tiny_mamba_ssm",
+        device="cpu",
+    )
 
-    assert model.__class__.__name__ == "MambaStyleForecaster"
+    assert model.__class__.__name__ == "PINNForecaster"
+    assert hasattr(model, "forward_with_latents")

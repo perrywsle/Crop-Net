@@ -100,10 +100,14 @@ def test_build_monthly_features_from_directory_matches_model_contract(tmp_path: 
 class _DummyPredictor:
     feature_names: list[str]
     seq_len: int = 2
+    supports_latent_state: bool = False
 
     def predict_next(self, window: np.ndarray, seasonal_base: np.ndarray | None = None) -> np.ndarray:
         last_row = window[-1]
         return last_row + 1.0
+
+    def predict_next_with_latents(self, window: np.ndarray, seasonal_base: np.ndarray | None = None) -> tuple[np.ndarray, None]:
+        return self.predict_next(window, seasonal_base=seasonal_base), None
 
 
 def test_rollout_autoregressive_crosses_year_boundary() -> None:
@@ -194,6 +198,7 @@ def test_build_forecast_from_directory_runs_all_four_models(tmp_path: Path, monk
             self.model_name = model_name
             self.feature_names = ["feature_a"]
             self.seq_len = 2
+            self.supports_latent_state = False
 
         def predict_future_months(self, monthly_features: pd.DataFrame, horizon: int = 12, progress=None):  # noqa: ANN001
             del progress
@@ -211,6 +216,9 @@ def test_build_forecast_from_directory_runs_all_four_models(tmp_path: Path, monk
                 }
             )
             return forecast
+
+        def predict_future_months_with_latents(self, monthly_features: pd.DataFrame, horizon: int = 12, progress=None):  # noqa: ANN001
+            return self.predict_future_months(monthly_features, horizon=horizon, progress=progress), None
 
     monkeypatch.setattr(
         "crop_fusion_ai.gui.forecasting.build_monthly_features_from_directory",
@@ -235,6 +243,7 @@ def test_build_forecast_from_directory_runs_all_four_models(tmp_path: Path, monk
     assert set(result.forecast_by_model) == {"lstm", "transformer_encoder", "gru", "tiny_mamba_ssm"}
     assert result.predictor.model_name == "lstm"
     assert len(result.forecast) == 3
+    assert result.derived_drivers_by_model == {}
 
 
 def test_extract_ndvi_features_falls_back_for_low_signal_images(tmp_path: Path) -> None:

@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--feature-mask-prob", type=float, default=0.05)
     parser.add_argument("--time-mask-prob", type=float, default=0.0)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--max-epochs", type=int, default=80)
+    parser.add_argument("--max-epochs", type=int, default=2000)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--latent-state-dim", type=int, default=3)
     parser.add_argument("--physics-weight", type=float, default=0.1)

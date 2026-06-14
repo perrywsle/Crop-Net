@@ -120,6 +120,17 @@ function buildChatContextSnapshot(result) {
       best_model: result.summary?.best_model || {},
       holdout: result.summary?.holdout || {},
     },
+    benchmark_summary: result.benchmark_summary || result.summary || {},
+    feature_model_runs: (result.feature_model_runs || []).map((run) => ({
+      key: run.key,
+      label: run.label,
+      r2: run.r2,
+      val_r2: run.val_r2,
+      rmse: run.rmse,
+      val_rmse: run.val_rmse,
+      trainable_parameters: run.trainable_parameters,
+      target_mode: run.target_mode,
+    })),
     drivers: (result.drivers || []).slice(0, 3),
     feature_groups: (result.feature_groups || []).map((group) => ({
       group: group.group,
@@ -843,11 +854,134 @@ function drawMultiSeriesChart(svg, observedSeries, forecastSeriesByModel, option
   }
 }
 
+function normalizeLatentSeries(rows, latentKey) {
+  return (rows || []).map((row) => ({
+    label: resolveMonthLabel(row),
+    value: row?.[latentKey] ?? null,
+  }));
+}
+
+function renderModelQualityCard(result) {
+  const runs = (result.feature_model_runs || []).slice();
+  const bestRun = result.feature_model_best || runs[0] || null;
+  const summaryTarget = el("#modelQuality");
+  const subTarget = el("#modelQualitySub");
+  if (!summaryTarget || !subTarget) return;
+
+  if (!runs.length) {
+    summaryTarget.innerHTML = `<div class="model-quality-empty">No trained feature runs were found under <code>training/runs/</code>.</div>`;
+    subTarget.textContent = "The dashboard will use the best available trained model once runs are present.";
+    return;
+  }
+
+  const topRuns = runs.slice(0, 4);
+  summaryTarget.innerHTML = topRuns
+    .map((run) => {
+      const isBest = bestRun && run.key === bestRun.key;
+      const metrics = [
+        `Test R2 ${formatValue(run.r2)}`,
+        `Val R2 ${formatValue(run.val_r2)}`,
+        `Test RMSE ${formatValue(run.rmse)}`,
+      ];
+      const metaBits = [
+        run.trainable_parameters !== null && run.trainable_parameters !== undefined ? `${formatValue(run.trainable_parameters, "integer")} params` : null,
+        run.target_mode ? `${run.target_mode}` : null,
+      ].filter(Boolean);
+      return `
+        <div class="model-quality-item ${isBest ? "best" : ""}">
+          <div class="model-quality-item-head">
+            <strong>${escapeHtml(run.label || run.key || "Model")}</strong>
+            <span>${escapeHtml(run.status || run.model_type || "trained")}</span>
+          </div>
+          <div class="model-quality-item-metrics">
+            ${metrics.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+          </div>
+          ${metaBits.length ? `<div class="model-quality-item-meta">${metaBits.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}</div>` : ""}
+        </div>
+      `;
+    })
+    .join("");
+  subTarget.textContent = bestRun
+    ? `Best trained run: ${bestRun.label || bestRun.key || "Model"} · ` +
+      `test R2 ${formatValue(bestRun.r2)} · val R2 ${formatValue(bestRun.val_r2)}`
+    : "Trained feature model metrics loaded from training/runs/.";
+}
+
+function renderDerivedDriverPanel(result) {
+  const derivedForecasts = result.derived_drivers_by_model || {};
+  const latentModelOrder = MODEL_ORDER.filter((modelKey) => Array.isArray(derivedForecasts[modelKey]));
+  const cardsTarget = el("#derivedDriverCards");
+  if (!cardsTarget) return;
+  const channels = [
+    {
+      key: "latent_biomass",
+      label: "Biomass state",
+      description: "Unitless latent index for crop buildup and canopy strength.",
+    },
+    {
+      key: "latent_phenology",
+      label: "Phenology state",
+      description: "Unitless latent index for the crop growth stage across the season.",
+    },
+    {
+      key: "latent_water",
+      label: "Water stress state",
+      description: "Unitless latent index for moisture stress and water limitation.",
+    },
+  ];
+  cardsTarget.innerHTML = channels
+    .map(
+      (channel) => `
+        <article class="feature-card derived-driver-card">
+          <div class="feature-card-top">
+            <div>
+              <div class="feature-label">${channel.label}</div>
+              <div class="feature-desc">${channel.description}</div>
+            </div>
+            <div class="feature-value">
+              <span>Unit</span>
+              <strong>Latent index</strong>
+            </div>
+          </div>
+          <svg class="spark" id="derived-driver-${channel.key}" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMid meet"></svg>
+        </article>
+      `,
+    )
+    .join("");
+
+  channels.forEach((channel) => {
+    const svg = document.getElementById(`derived-driver-${channel.key}`);
+    if (!svg) return;
+    const modelForecasts = {};
+    latentModelOrder.forEach((modelKey) => {
+      const rows = derivedForecasts[modelKey] || [];
+      modelForecasts[modelKey] = normalizeLatentSeries(rows, channel.key);
+    });
+    drawMultiSeriesChart(
+      svg,
+      [],
+      modelForecasts,
+      {
+        id: `derived-driver-${channel.key}`,
+        showAxes: true,
+        showTicks: true,
+        showXAxisLabels: true,
+        padding: { top: 16, right: 20, bottom: 30, left: 52 },
+        modelOrder: latentModelOrder,
+        modelLabels: MODEL_LABELS,
+        modelColors: MODEL_COLORS,
+        modelStyles: MODEL_STYLES,
+      },
+    );
+  });
+}
+
 function renderFeatureGroups(result) {
   const groups = (result.feature_groups || []).filter((group) => group.group !== "season");
   const tabs = [
     { group: "primary-driver", label: "Primary Driver" },
     ...groups.map((group) => ({ group: group.group, label: group.label })),
+    { group: "derived-driver", label: "Derived Driver" },
   ];
   if (!state.activeGroup || !tabs.some((tab) => tab.group === state.activeGroup)) {
     state.activeGroup = "primary-driver";
@@ -865,13 +999,17 @@ function renderFeatureGroups(result) {
     .join("");
   const legendTarget = el("#featureLegend");
   if (legendTarget) {
-    legendTarget.innerHTML = [
-      `<span class="legend-chip"><span class="legend-dot" style="background:#d9772b"></span>Observed</span>`,
-      ...MODEL_ORDER.map(
-        (modelKey) =>
-          `<span class="legend-chip"><span class="legend-dot" style="background:${MODEL_COLORS[modelKey]}"></span>${MODEL_LABELS[modelKey]}</span>`,
-      ),
-    ].join("");
+    legendTarget.classList.toggle("hidden", state.activeGroup === "derived-driver");
+    legendTarget.innerHTML =
+      state.activeGroup === "derived-driver"
+        ? ""
+        : [
+            `<span class="legend-chip"><span class="legend-dot" style="background:#d9772b"></span>Observed</span>`,
+            ...MODEL_ORDER.map(
+              (modelKey) =>
+                `<span class="legend-chip"><span class="legend-dot" style="background:${MODEL_COLORS[modelKey]}"></span>${MODEL_LABELS[modelKey]}</span>`,
+            ),
+          ].join("");
   }
 
   const allFeatures = groups.flatMap((group) => group.features || []);
@@ -886,12 +1024,17 @@ function renderFeatureGroups(result) {
 
   const primaryPanel = el("#primaryDriverPanel");
   primaryPanel.classList.toggle("hidden", state.activeGroup !== "primary-driver");
+  const derivedPanel = el("#derivedDriverPanel");
+  derivedPanel.classList.toggle("hidden", state.activeGroup !== "derived-driver");
   const featurePanels = el("#featureGroupPanels");
 
   const importance = result.feature_importance || [];
   if (state.activeGroup === "primary-driver") {
     featurePanels.classList.add("hidden");
     featurePanels.innerHTML = "";
+    if (derivedPanel) {
+      derivedPanel.classList.add("hidden");
+    }
     drawBarChart(
       el("#importanceChart"),
       importance.slice(0, 8).map((item) => ({
@@ -899,6 +1042,13 @@ function renderFeatureGroups(result) {
         value: item.importance,
       })),
     );
+    return;
+  }
+
+  if (state.activeGroup === "derived-driver") {
+    featurePanels.classList.add("hidden");
+    featurePanels.innerHTML = "";
+    renderDerivedDriverPanel(result);
     return;
   }
 
@@ -972,21 +1122,66 @@ function renderFeatureGroups(result) {
 }
 
 function renderBenchmarkTable(result) {
-  const summary = result.summary || {};
-  const best = summary.best_model || {};
-  const holdout = summary.holdout || {};
-  const rows = [
-    ["Best model", best.model || summary.model_name || "Not available"],
+  const benchmark = result.benchmark_summary || result.summary || {};
+  const best = benchmark.best_model || {};
+  const holdout = benchmark.holdout || {};
+  const featureRuns = (result.feature_model_runs || []).slice();
+  const benchmarkRows = [
+    ["Current model", benchmark.model_name || "Not available"],
+    ["Feature count", benchmark.feature_count !== null && benchmark.feature_count !== undefined ? formatValue(benchmark.feature_count, "integer") : "Not available"],
+    ["Target units", benchmark.target_units || "Not available"],
+    ["Best holdout model", best.model || "Not available"],
     ["Holdout RMSE", holdout.rmse !== null && holdout.rmse !== undefined ? formatValue(holdout.rmse) : "Not available"],
     ["Holdout MAE", holdout.mae !== null && holdout.mae !== undefined ? formatValue(holdout.mae) : "Not available"],
-    ["R squared", holdout.r2 !== null && holdout.r2 !== undefined ? formatValue(holdout.r2) : "Not available"],
+    ["Holdout R squared", holdout.r2 !== null && holdout.r2 !== undefined ? formatValue(holdout.r2) : "Not available"],
   ];
+
+  const featureRunRows = featureRuns.length
+    ? `
+      <div class="table-section">
+        <h4>Feature forecast runs</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Run</th>
+              <th>Val R2</th>
+              <th>Test R2</th>
+              <th>Val RMSE</th>
+              <th>Test RMSE</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${featureRuns
+              .map(
+                (run) => `
+                  <tr>
+                    <td>${escapeHtml(run.label || run.key || "Model")}</td>
+                    <td>${escapeHtml(run.run_dir || "")}</td>
+                    <td>${formatValue(run.val_r2)}</td>
+                    <td>${formatValue(run.r2)}</td>
+                    <td>${formatValue(run.val_rmse)}</td>
+                    <td>${formatValue(run.rmse)}</td>
+                  </tr>
+                `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `
+    : "";
+
   el("#benchmarkTable").innerHTML = `
-    <table>
-      <tbody>
-        ${rows.map(([key, value]) => `<tr><th>${key}</th><td>${value}</td></tr>`).join("")}
-      </tbody>
-    </table>
+    <div class="table-section">
+      <h4>Yield benchmark summary</h4>
+      <table>
+        <tbody>
+          ${benchmarkRows.map(([key, value]) => `<tr><th>${key}</th><td>${value}</td></tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+    ${featureRunRows}
   `;
 }
 
@@ -1101,9 +1296,7 @@ function renderHeadline(result) {
       : "Latest available month");
   el("#headlineYield").textContent = `${formatValue(displayHeadline.predicted_yield)} ${displayHeadline.unit || headline.unit || ""}`.trim();
   el("#headlineMonth").textContent = displayMonth;
-  const summary = result.summary || {};
-  const best = summary.best_model || {};
-  el("#modelQuality").textContent = best.rmse ? `RMSE ${formatValue(best.rmse)} | MAE ${formatValue(best.mae)}` : "Ready";
+  renderModelQualityCard(result);
   el("#topDriver").textContent = result.drivers?.[0]?.label || "Not available";
   el("#dataCoverage").textContent = `${(result.monthly_features || []).length} monthly rows`;
 }

@@ -13,6 +13,8 @@ from .data import prepare_monthly_features
 class BlankFillResult:
     predictions: pd.DataFrame
     prediction_long: pd.DataFrame
+    latent_predictions: pd.DataFrame | None = None
+    latent_long: pd.DataFrame | None = None
 
 
 ProgressCallback = Callable[[str, int, int, str], None]
@@ -38,6 +40,19 @@ def _next_month(year: int, month: int) -> tuple[int, int]:
     return year, month + 1
 
 
+def _latent_state_vector(latent: np.ndarray | None) -> np.ndarray | None:
+    if latent is None:
+        return None
+    values = np.asarray(latent, dtype=float)
+    if values.ndim == 0:
+        return values.reshape(1)
+    if values.ndim == 1:
+        return values
+    if values.ndim >= 2:
+        return values[-1]
+    return None
+
+
 def rollout_blank_fill(
     predictor,
     monthly_features: pd.DataFrame,
@@ -48,6 +63,7 @@ def rollout_blank_fill(
     prepared = prepare_monthly_features(monthly_features, feature_names)
     seasonal_lookup = build_seasonal_lookup(prepared, feature_names)
     rows = []
+    latent_rows = []
     for (county_id, crop_type), group in prepared.groupby(["county_id", "crop_type"], sort=True):
         group = group.sort_values(["year", "month"]).reset_index(drop=True)
         known_history = group[(group["year"] < year) | ((group["year"] == year) & (group["month"] <= known_months))].copy()
@@ -62,7 +78,7 @@ def rollout_blank_fill(
                 source_note = "fallback_last_history"
             else:
                 source_note = "seasonal_last_year"
-            forecast = predictor.predict_next(window, seasonal_base=seasonal_base)
+            forecast, latent = predictor.predict_next_with_latents(window, seasonal_base=seasonal_base)
             predicted_row = {
                 "county_id": str(county_id).zfill(5),
                 "crop_type": str(crop_type),
@@ -74,6 +90,22 @@ def rollout_blank_fill(
             for name, value in zip(feature_names, forecast, strict=True):
                 predicted_row[name] = float(value)
             rows.append(predicted_row)
+            latent_vector = _latent_state_vector(latent)
+            if latent_vector is not None:
+                latent_rows.append(
+                    {
+                        "county_id": str(county_id).zfill(5),
+                        "crop_type": str(crop_type),
+                        "year": int(year),
+                        "month": int(month),
+                        "known_months": int(known_months),
+                        "month_label": f"{int(year)}-{int(month):02d}",
+                        "source_note": source_note,
+                        "latent_biomass": float(latent_vector[0]) if latent_vector.size > 0 else None,
+                        "latent_phenology": float(latent_vector[1]) if latent_vector.size > 1 else None,
+                        "latent_water": float(latent_vector[2]) if latent_vector.size > 2 else None,
+                    }
+                )
             history_rows = pd.concat([history_rows, pd.DataFrame([{k: predicted_row[k] for k in META_COLS + feature_names}])], ignore_index=True)
     predictions = pd.DataFrame(rows)
     long_records = []
@@ -90,7 +122,30 @@ def rollout_blank_fill(
                     "y_pred": getattr(row, feature_name),
                     "source_note": row.source_note,
                 })
-    return BlankFillResult(predictions=predictions, prediction_long=pd.DataFrame(long_records))
+    latent_predictions = pd.DataFrame(latent_rows)
+    latent_long_records = []
+    if not latent_predictions.empty:
+        for row in latent_predictions.itertuples(index=False):
+            for latent_name in ("latent_biomass", "latent_phenology", "latent_water"):
+                latent_long_records.append(
+                    {
+                        "county_id": row.county_id,
+                        "crop_type": row.crop_type,
+                        "year": row.year,
+                        "month": row.month,
+                        "known_months": row.known_months,
+                        "month_label": row.month_label,
+                        "latent": latent_name.replace("latent_", ""),
+                        "y_pred": getattr(row, latent_name),
+                        "source_note": row.source_note,
+                    }
+                )
+    return BlankFillResult(
+        predictions=predictions,
+        prediction_long=pd.DataFrame(long_records),
+        latent_predictions=latent_predictions,
+        latent_long=pd.DataFrame(latent_long_records),
+    )
 
 
 def rollout_autoregressive(
@@ -103,6 +158,7 @@ def rollout_autoregressive(
     prepared = prepare_monthly_features(monthly_features, feature_names)
     seasonal_lookup = build_seasonal_lookup(prepared, feature_names)
     rows = []
+    latent_rows = []
 
     for (county_id, crop_type), group in prepared.groupby(["county_id", "crop_type"], sort=True):
         group = group.sort_values(["year", "month"]).reset_index(drop=True)
@@ -122,7 +178,7 @@ def rollout_autoregressive(
                 source_note = "fallback_last_history"
             else:
                 source_note = "seasonal_last_year"
-            forecast = predictor.predict_next(window, seasonal_base=seasonal_base)
+            forecast, latent = predictor.predict_next_with_latents(window, seasonal_base=seasonal_base)
             predicted_row = {
                 "county_id": str(county_id).zfill(5),
                 "crop_type": str(crop_type),
@@ -134,6 +190,22 @@ def rollout_autoregressive(
             for name, value in zip(feature_names, forecast, strict=True):
                 predicted_row[name] = float(value)
             rows.append(predicted_row)
+            latent_vector = _latent_state_vector(latent)
+            if latent_vector is not None:
+                latent_rows.append(
+                    {
+                        "county_id": str(county_id).zfill(5),
+                        "crop_type": str(crop_type),
+                        "year": int(current_year),
+                        "month": int(current_month),
+                        "forecast_step": int(step),
+                        "month_label": f"{int(current_year)}-{int(current_month):02d}",
+                        "source_note": source_note,
+                        "latent_biomass": float(latent_vector[0]) if latent_vector.size > 0 else None,
+                        "latent_phenology": float(latent_vector[1]) if latent_vector.size > 1 else None,
+                        "latent_water": float(latent_vector[2]) if latent_vector.size > 2 else None,
+                    }
+                )
             history_rows = pd.concat(
                 [
                     history_rows,
@@ -172,5 +244,28 @@ def rollout_autoregressive(
                         "source_note": row.source_note,
                     }
                 )
+    latent_predictions = pd.DataFrame(latent_rows)
+    latent_long_records = []
+    if not latent_predictions.empty:
+        for row in latent_predictions.itertuples(index=False):
+            for latent_name in ("latent_biomass", "latent_phenology", "latent_water"):
+                latent_long_records.append(
+                    {
+                        "county_id": row.county_id,
+                        "crop_type": row.crop_type,
+                        "year": row.year,
+                        "month": row.month,
+                        "forecast_step": row.forecast_step,
+                        "month_label": row.month_label,
+                        "latent": latent_name.replace("latent_", ""),
+                        "y_pred": getattr(row, latent_name),
+                        "source_note": row.source_note,
+                    }
+                )
 
-    return BlankFillResult(predictions=predictions, prediction_long=pd.DataFrame(long_records))
+    return BlankFillResult(
+        predictions=predictions,
+        prediction_long=pd.DataFrame(long_records),
+        latent_predictions=latent_predictions,
+        latent_long=pd.DataFrame(latent_long_records),
+    )

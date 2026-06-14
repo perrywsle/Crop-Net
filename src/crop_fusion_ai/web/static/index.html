@@ -31,10 +31,6 @@
             <li>Compare the yield estimate, drivers, and charts.</li>
           </ol>
         </div>
-        <div class="sidebar-card accent">
-          <div class="sidebar-title">Default model</div>
-          <div class="sidebar-copy">Saved monthly yield model tuned for county-level corn yield prediction.</div>
-        </div>
       </aside>
 
       <main class="app">
@@ -91,8 +87,8 @@
           </article>
           <article class="card result-card">
             <div class="card-topline">Model quality</div>
-            <div class="metric" id="modelQuality">--</div>
-            <div class="metric-sub">Holdout RMSE and MAE from the saved benchmark.</div>
+            <div id="modelQuality" class="model-quality-summary"></div>
+            <div class="metric-sub" id="modelQualitySub">Loaded from the trained feature models in `training/runs/`.</div>
           </article>
           <article class="card result-card">
             <div class="card-topline">Top driver</div>
@@ -146,6 +142,10 @@
                 <div id="primaryDriverSummary" class="driver-primary-summary"></div>
                 <svg class="chart chart-tall" id="importanceChart" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid meet"></svg>
               </div>
+            </section>
+            <section class="card panel-card driver-primary-panel hidden" id="derivedDriverPanel">
+              <h3>Derived Driver</h3>
+              <div id="derivedDriverCards" class="derived-driver-grid"></div>
             </section>
             <div id="featureGroupPanels"></div>
           </section>

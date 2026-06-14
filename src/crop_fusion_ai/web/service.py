@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -47,10 +48,28 @@ DEFAULT_BENCHMARK_PATH = (
     / "corn_ia_2017_2022_monthly"
     / "yield_model_benchmark.csv"
 )
-DEFAULT_FEATURE_FORECAST_CONFIG = Path(__file__).resolve().parents[3] / "configs" / "residual_lstm_all.yaml"
-DEFAULT_FEATURE_FORECAST_SCALER = Path(__file__).resolve().parents[3] / "weights" / "scaler.csv"
-DEFAULT_FEATURE_FORECAST_CHECKPOINT = Path(__file__).resolve().parents[3] / "weights" / "lstm_best.pt"
+DEFAULT_FEATURE_FORECAST_CONFIG = Path(__file__).resolve().parents[3] / "training" / "runs" / "lstm_best" / "config.json"
+DEFAULT_FEATURE_FORECAST_SCALER = Path(__file__).resolve().parents[3] / "training" / "runs" / "lstm_best" / "scaler.csv"
+DEFAULT_FEATURE_FORECAST_CHECKPOINT = Path(__file__).resolve().parents[3] / "training" / "runs" / "lstm_best" / "lstm" / "checkpoint.pt"
 YIELD_MODEL_DIR = Path(__file__).resolve().parents[3] / "outputs" / "predicted_yield_experiments" / "yield_models"
+FEATURE_MODEL_RUNS: dict[str, dict[str, Any]] = {
+    "lstm": {
+        "label": "LSTM",
+        "run_dir": Path(__file__).resolve().parents[3] / "training" / "runs" / "lstm_best",
+    },
+    "gru": {
+        "label": "GRU",
+        "run_dir": Path(__file__).resolve().parents[3] / "training" / "runs" / "gru_best",
+    },
+    "transformer_encoder": {
+        "label": "Transformer Encoder",
+        "run_dir": Path(__file__).resolve().parents[3] / "training" / "runs" / "transformer_best",
+    },
+    "tiny_mamba_ssm": {
+        "label": "Tiny Mamba SSM",
+        "run_dir": Path(__file__).resolve().parents[3] / "training" / "runs" / "mamba_best",
+    },
+}
 YIELD_MODEL_VARIANTS: dict[str, dict[str, Any]] = {
     "naive_lag1": {
         "label": "Naive lag-1",
@@ -219,6 +238,58 @@ def _predict_yield_rows(model: Any, frame: pd.DataFrame, feature_names: list[str
     return rows
 
 
+def _load_feature_run_metrics(model_key: str, spec: dict[str, Any]) -> dict[str, Any] | None:
+    run_dir = Path(spec["run_dir"])
+    metrics_path = run_dir / "metrics.csv"
+    config_path = run_dir / "config.json"
+    if not metrics_path.exists():
+        return None
+    metrics = pd.read_csv(metrics_path)
+    row = metrics[metrics["model"] == model_key].copy()
+    if row.empty:
+        row = metrics.head(1).copy()
+    if row.empty:
+        return None
+    record = row.iloc[0].to_dict()
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    return {
+        "key": model_key,
+        "label": str(spec.get("label", model_key)),
+        "run_dir": str(run_dir),
+        "config_path": str(config_path) if config_path.exists() else None,
+        "checkpoint_path": record.get("checkpoint_path"),
+        "history_path": record.get("history_path"),
+        "loss_curve_path": record.get("loss_curve_path"),
+        "physics_curve_path": record.get("physics_curve_path"),
+        "predictions_path": record.get("predictions_path"),
+        "trainable_parameters": int(record["trainable_parameters"]) if pd.notna(record.get("trainable_parameters")) else None,
+        "total_parameters": int(record["total_parameters"]) if pd.notna(record.get("total_parameters")) else None,
+        "train_loss": float(record["train_loss"]) if pd.notna(record.get("train_loss")) else None,
+        "val_loss": float(record["val_loss"]) if pd.notna(record.get("val_loss")) else None,
+        "physics_loss": float(record["physics_loss"]) if pd.notna(record.get("physics_loss")) else None,
+        "rmse": float(record["rmse"]) if pd.notna(record.get("rmse")) else None,
+        "mae": float(record["mae"]) if pd.notna(record.get("mae")) else None,
+        "mse": float(record["mse"]) if pd.notna(record.get("mse")) else None,
+        "r2": float(record["r2"]) if pd.notna(record.get("r2")) else None,
+        "val_rmse": float(record["val_rmse"]) if pd.notna(record.get("val_rmse")) else None,
+        "val_mae": float(record["val_mae"]) if pd.notna(record.get("val_mae")) else None,
+        "val_mse": float(record["val_mse"]) if pd.notna(record.get("val_mse")) else None,
+        "val_r2": float(record["val_r2"]) if pd.notna(record.get("val_r2")) else None,
+        "status": str(record.get("status") or ""),
+        "target_mode": str(config.get("target_mode", "")) if config else None,
+        "seq_len": int(config["seq_len"]) if config.get("seq_len") is not None else None,
+        "hidden_size": int(config["hidden_size"]) if config.get("hidden_size") is not None else None,
+        "num_layers": int(config["num_layers"]) if config.get("num_layers") is not None else None,
+        "dropout": float(config["dropout"]) if config.get("dropout") is not None else None,
+        "learning_rate": float(config["learning_rate"]) if config.get("learning_rate") is not None else None,
+        "weight_decay": float(config["weight_decay"]) if config.get("weight_decay") is not None else None,
+        "physics_weight": float(config["physics_weight"]) if config.get("physics_weight") is not None else None,
+        "physics_warmup_epochs": int(config["physics_warmup_epochs"]) if config.get("physics_warmup_epochs") is not None else None,
+    }
+
+
 class YieldModelService:
     """Load the saved monthly yield model and produce farmer-friendly results."""
 
@@ -236,6 +307,7 @@ class YieldModelService:
         self._model = joblib.load(self.model_path)
         self._yield_models = self._load_yield_models()
         self._metadata = self._load_json(self.metadata_path)
+        self._feature_model_runs = self._load_feature_model_runs()
         benchmark = self._load_benchmark(self.benchmark_path)
         self._summary = YieldModelSummary(
             model_name=str(self._metadata.get("best_model_name") or self._model.named_steps["model"].__class__.__name__),
@@ -287,6 +359,22 @@ class YieldModelService:
                 "model": joblib.load(path),
             }
         return models
+
+    @staticmethod
+    def _load_feature_model_runs() -> list[dict[str, Any]]:
+        runs: list[dict[str, Any]] = []
+        for key, spec in FEATURE_MODEL_RUNS.items():
+            loaded = _load_feature_run_metrics(key, spec)
+            if loaded is not None:
+                runs.append(loaded)
+        runs.sort(
+            key=lambda item: (
+                -(item.get("r2") if item.get("r2") is not None else float("-inf")),
+                item.get("rmse") if item.get("rmse") is not None else float("inf"),
+                item.get("label") or item.get("key"),
+            )
+        )
+        return runs
 
     @staticmethod
     def _extract_metric(benchmark: pd.DataFrame, metric: str) -> float | None:
@@ -451,13 +539,17 @@ class YieldModelService:
 
         drivers = [item for item in importance_payload[:5]]
         yield_series = prediction_rows
+        feature_model_best = self._feature_model_runs[0] if self._feature_model_runs else None
         return {
             "summary": self._summary.to_payload(),
+            "benchmark_summary": self._summary.to_payload(),
             "headline": headline,
             "prediction_rows": prediction_rows,
             "yield_series": prediction_rows,
             "yield_series_by_model": yield_series_by_model,
             "yield_models": yield_model_payload,
+            "feature_model_runs": self._feature_model_runs,
+            "feature_model_best": feature_model_best,
             "feature_groups": feature_group_payload,
             "monthly_features": prediction_frame.assign(
                 month_label=prediction_frame[["year", "month"]].apply(_month_label, axis=1)
@@ -537,8 +629,32 @@ class YieldModelService:
                     if model_key in feature_forecasts.predictor_by_model
                     else model_key,
                 ),
+                "supports_latent_state": bool(
+                    getattr(feature_forecasts.predictor_by_model.get(model_key), "supports_latent_state", False)
+                ),
             }
             for model_key in feature_forecasts.forecast_by_model.keys()
+        ]
+        payload["derived_drivers_by_model"] = {
+            model_key: forecast.assign(
+                month_label=forecast[["year", "month"]].apply(_month_label, axis=1)
+            ).replace({np.nan: None}).to_dict(orient="records")
+            for model_key, forecast in feature_forecasts.derived_drivers_by_model.items()
+        }
+        payload["derived_driver_models"] = [
+            {
+                "key": model_key,
+                "label": next(
+                    (
+                        item["label"]
+                        for item in payload["feature_forecast_models"]
+                        if item["key"] == model_key
+                    ),
+                    model_key,
+                ),
+                "supports_latent_state": True,
+            }
+            for model_key in feature_forecasts.derived_drivers_by_model.keys()
         ]
         payload["yield_trajectory_by_model"] = yield_trajectory_by_model
         if forecast_headline is not None:

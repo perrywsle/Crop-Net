@@ -35,10 +35,36 @@ class _DummyService:
             "yield_series": [],
             "feature_groups": [],
             "summary": self.summary.to_payload(),
+            "benchmark_summary": self.summary.to_payload(),
+            "feature_model_runs": [
+                {
+                    "key": "lstm",
+                    "label": "LSTM",
+                    "r2": 0.91,
+                    "val_r2": 0.92,
+                    "rmse": 2.6,
+                    "val_rmse": 2.5,
+                    "trainable_parameters": 58848,
+                    "target_mode": "raw",
+                }
+            ],
+            "feature_model_best": {
+                "key": "lstm",
+                "label": "LSTM",
+                "r2": 0.91,
+                "val_r2": 0.92,
+                "rmse": 2.6,
+                "val_rmse": 2.5,
+                "trainable_parameters": 58848,
+                "target_mode": "raw",
+            },
             "drivers": [],
             "monthly_features": [],
             "feature_importance": [],
             "feature_forecasts_by_model": {},
+            "feature_forecast_models": [],
+            "derived_drivers_by_model": {},
+            "derived_driver_models": [],
         }
 
 
