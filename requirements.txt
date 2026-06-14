@@ -1,10 +1,24 @@
 numpy>=1.26
 pandas>=2.2
+scikit-learn>=1.4
+torch>=2.1
+matplotlib>=3.8
+pyarrow>=16.0
+fastapi>=0.115
+statsmodels>=0.14
+python-multipart>=0.0.9
+pyyaml>=6.0
+tqdm>=4.66
+h5py>=3.11
+seaborn>=0.13
+joblib>=1.4
 huggingface_hub>=0.24
+langchain-core>=1.0.0
+langchain-ollama>=1.1.0
 pydantic>=2.7
 pydantic-settings>=2.2
-scikit-learn>=1.4
 pillow>=10.3
+uvicorn>=0.30
 
 # Development tools
 mypy>=1.10

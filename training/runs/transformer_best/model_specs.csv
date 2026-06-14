@@ -1,0 +1,2 @@
+model,model_type,checkpoint_path,history_path,predictions_path,trainable_parameters,total_parameters,status
+transformer_encoder,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/test_predictions.csv,172224,172224,trained

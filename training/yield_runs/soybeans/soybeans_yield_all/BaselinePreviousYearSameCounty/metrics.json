@@ -1,0 +1,17 @@
+{
+  "model_name": "BaselinePreviousYearSameCounty",
+  "model_type": "baseline",
+  "val_metrics": {
+    "rmse": 9.029369626300571,
+    "mae": 7.832638888888889,
+    "mse": 81.52951584835931,
+    "r2": -5.371320381917365
+  },
+  "test_metrics": {
+    "rmse": 6.529806888681649,
+    "mae": 5.066513761467889,
+    "mse": 42.638378003474315,
+    "r2": 0.12676984247405443
+  },
+  "status": "evaluated"
+}

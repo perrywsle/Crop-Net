@@ -1,0 +1,3 @@
+2026-06-12T11:18:23.2169470+08:00 WATCHER START waiting_for_runner_pid=2940
+2026-06-12T11:18:23.3993850+08:00 WATCHER SKIP merge/train: extraction runner did not complete successfully
+2026-06-12T11:19:02.5988951+08:00 WATCHER2 START polling_runner_pid=2940

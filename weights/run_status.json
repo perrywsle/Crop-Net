@@ -1,0 +1,9 @@
+{
+  "run_name": "ia30_seq6_seasonal_residual_blankfill",
+  "status": "completed",
+  "started_at": "2026-05-26T13:23:22+0800",
+  "ended_at": "2026-05-26T13:25:44+0800",
+  "runtime_seconds": 141.9385507106781,
+  "error": null,
+  "output_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill"
+}

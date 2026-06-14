@@ -1,0 +1,2 @@
+model,model_type,checkpoint_path,history_path,predictions_path,trainable_parameters,total_parameters,status
+tiny_mamba_ssm,learned,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/mamba_best/tiny_mamba_ssm/checkpoint.pt,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/mamba_best/tiny_mamba_ssm/history.csv,/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/mamba_best/tiny_mamba_ssm/test_predictions.csv,58432,58432,trained

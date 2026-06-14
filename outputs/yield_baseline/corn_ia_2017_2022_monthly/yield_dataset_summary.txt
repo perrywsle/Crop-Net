@@ -1,0 +1,27 @@
+monthly_path=outputs\experiments\corn_ia_ground_truth_smoke_q2q3_2021_2022\artifacts\official_monthly_feature_table.parquet
+usda_paths=data\usda_labels\USDA Crop Dataset\Corn\2017\USDA_Corn_County_2017.csv, data\usda_labels\USDA Crop Dataset\Corn\2018\USDA_Corn_County_2018.csv, data\usda_labels\USDA Crop Dataset\Corn\2019\USDA_Corn_County_2019.csv, data\usda_labels\USDA Crop Dataset\Corn\2020\USDA_Corn_County_2020.csv, data\usda_labels\USDA Crop Dataset\Corn\2021\USDA_Corn_County_2021.csv, data\usda_labels\USDA Crop Dataset\Corn\2022\USDA_Corn_County_2022.csv
+crop_type=corn
+feature_group=all
+target_grain=monthly
+label_strategy=annual_yield_copied_to_months
+split_mode=year_split (test_year=2022)
+rows=42
+train_rows=18
+test_rows=24
+feature_count_before_pruning=31
+feature_count_after_pruning=28
+county_overlap=5
+year_overlap=2
+county_year_overlap=7
+best_model=ExtraTrees
+results_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\yield_model_benchmark.csv
+feature_group_benchmark_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\feature_group_benchmark.csv
+year_cv_benchmark_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\year_cv_benchmark.csv
+month_benchmark_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\month_benchmark.csv
+window_benchmark_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\window_benchmark.csv
+feature_pruning_report_json=outputs\yield_baseline\corn_ia_2017_2022_monthly\feature_pruning_report.json
+prediction_residuals_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\prediction_residuals.csv
+training_frame_csv=outputs\yield_baseline\corn_ia_2017_2022_monthly\merged_monthly_training_frame.csv
+model_path=outputs\yield_baseline\corn_ia_2017_2022_monthly\best_yield_model.joblib
+metadata_json=outputs\yield_baseline\corn_ia_2017_2022_monthly\yield_model_metadata.json
+importance_png=outputs\yield_baseline\corn_ia_2017_2022_monthly\yield_feature_importance.png

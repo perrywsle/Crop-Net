@@ -1,0 +1,17 @@
+{
+  "repo_id": "CropNet/CropNet",
+  "county_id": "19079",
+  "crop": "corn",
+  "years": [
+    2021
+  ],
+  "state_abbr": "IA",
+  "labels_only": false,
+  "allow_patterns": [
+    "USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv",
+    "Sentinel-2 Imagery/data/AG/2021/IA/*.h5",
+    "Sentinel-2 Imagery/data/NDVI/2021/IA/*.h5",
+    "WRF-HRRR Computed Dataset/data/2021/IA/*.csv"
+  ],
+  "output_dir": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/sample_data"
+}

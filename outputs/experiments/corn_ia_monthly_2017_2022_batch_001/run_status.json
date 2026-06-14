@@ -1,0 +1,9 @@
+{
+  "run_name": "corn_ia_monthly_2017_2022_batch_001",
+  "status": "completed",
+  "started_at": "2026-06-12T11:16:01+0800",
+  "ended_at": "2026-06-12T11:28:18+0800",
+  "runtime_seconds": 736.6680588722229,
+  "error": null,
+  "output_dir": "C:\\Users\\ASUS\\OneDrive\\Documents\\Crop Net\\Crop-Net-repo\\outputs\\experiments\\corn_ia_monthly_2017_2022_batch_001"
+}

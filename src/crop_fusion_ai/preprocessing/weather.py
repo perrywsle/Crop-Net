@@ -24,10 +24,11 @@ class WeatherFeatureConfig:
     frost_threshold_c: float = 0.0
     dry_day_precip_mm: float = 1.0
     rainy_day_precip_mm: float = 1.0
+    heavy_rain_day_precip_mm: float = 10.0
 
 
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    "date": ("date", "datetime", "day"),
+    "date": ("date", "datetime"),
     "temperature_mean": (
         "temperature_mean",
         "temp_mean",
@@ -123,9 +124,6 @@ def extract_weather_features(
     config = config or WeatherFeatureConfig()
     frame = _normalize_weather_columns(load_weather_frame(weather_input))
 
-    if "date" not in frame.columns:
-        msg = "Weather data must include a date column"
-        raise ValueError(msg)
     if "temperature_mean" not in frame.columns and not (
         "temperature_max" in frame.columns and "temperature_min" in frame.columns
     ):
@@ -142,7 +140,9 @@ def extract_weather_features(
         if daily_mask.any():
             frame = frame[daily_mask].copy()
 
-    if "date" not in frame.columns:
+    if "date" in frame.columns:
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    else:
         year_column = _first_present_column(frame, ("year",))
         month_column = _first_present_column(frame, ("month",))
         day_column = _first_present_column(frame, ("day",))
@@ -160,8 +160,6 @@ def extract_weather_features(
         else:
             msg = "Weather data must include a date column or year/month/day columns"
             raise ValueError(msg)
-    else:
-        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date"]).copy()
     if frame.empty:
         msg = "Weather data does not contain any parseable dates"
@@ -232,6 +230,7 @@ def extract_weather_features(
         days_in_month = int(monthrange(int(year), int(month))[1])
         rainy_days = int(group["rainy_day"].sum())
         dry_days = int(group["dry_day"].sum())
+        heavy_rain_days = int((precipitation >= config.heavy_rain_day_precip_mm).sum())
         monthly_precipitation = _safe_series_sum(precipitation)
         mean_vpd = float(vpd.mean()) if vpd.notna().any() else 0.0
         potential_evap = max(0.0, mean_vpd) * days_in_month * 10.0
@@ -240,6 +239,9 @@ def extract_weather_features(
             / (potential_evap + monthly_precipitation + 1e-6)
         )
         solar_sum = _safe_series_sum(solar_radiation.fillna(0.0))
+        temp_range_series = temp_max - temp_min
+        heat_stress_days = int(group["extreme_heat_day"].sum())
+        cold_stress_days = int(group["frost_day"].sum())
 
         monthly_rows.append(
             {
@@ -254,13 +256,17 @@ def extract_weather_features(
                     _safe_series_max(temp_max) - _safe_series_min(temp_min)
                 ),
                 "weather_gdd": float(group["gdd"].sum()),
-                "weather_extreme_heat_days": int(group["extreme_heat_day"].sum()),
+                "weather_extreme_heat_days": heat_stress_days,
+                "weather_heat_stress_days": heat_stress_days,
                 "weather_cold_stress_degree_days": float(
                     np.maximum(0.0, config.frost_threshold_c - temp_min).sum()
                 ),
+                "weather_cold_stress_days": cold_stress_days,
                 "weather_total_precipitation": monthly_precipitation,
                 "weather_rainy_days": rainy_days,
+                "weather_precipitation_days": rainy_days,
                 "weather_dry_days": dry_days,
+                "weather_heavy_rain_days": heavy_rain_days,
                 "weather_max_dry_streak": int(
                     longest_true_streak(group["dry_day"].tolist())
                 ),
@@ -268,7 +274,11 @@ def extract_weather_features(
                 if humidity.notna().any()
                 else np.nan,
                 "weather_vpd": mean_vpd,
+                "weather_vpd_mean": mean_vpd,
                 "weather_wind_speed_mean": float(wind_speed.mean())
+                if wind_speed.notna().any()
+                else np.nan,
+                "weather_wind_mean": float(wind_speed.mean())
                 if wind_speed.notna().any()
                 else np.nan,
                 "weather_wind_speed_max": float(wind_speed.max())
@@ -291,6 +301,7 @@ def extract_weather_features(
                 ),
                 "weather_drought_index": drought_index,
                 "weather_days_in_month": days_in_month,
+                "weather_temp_range_mean": float(temp_range_series.mean()),
             }
         )
 
@@ -355,6 +366,11 @@ def extract_weather_features(
     monthly_frame["weather_vpd_lag_1"] = monthly_frame.groupby("year")[
         "weather_vpd"
     ].shift(1)
+
+    monthly_frame["weather_vpd_mean"] = monthly_frame["weather_vpd"]
+    monthly_frame["weather_wind_mean"] = monthly_frame["weather_wind_speed_mean"]
+    monthly_frame["weather_heat_stress_days"] = monthly_frame["weather_extreme_heat_days"]
+    monthly_frame["weather_precipitation_days"] = monthly_frame["weather_rainy_days"]
 
     return monthly_frame
 

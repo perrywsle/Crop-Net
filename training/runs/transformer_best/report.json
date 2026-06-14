@@ -1,0 +1,42 @@
+{
+  "run_dir": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best",
+  "best_model": "transformer_encoder",
+  "results": [
+    {
+      "model": "transformer_encoder",
+      "model_type": "learned",
+      "split": "test",
+      "train_loss": 0.3753546351267968,
+      "val_loss": 0.7991398871948422,
+      "physics_loss": 1.1027760995357527,
+      "physics_latent_loss": 0.051085150013568024,
+      "physics_ag_loss": 0.03425908635561715,
+      "physics_ndvi_loss": 0.07965193591033569,
+      "physics_weather_loss": 3.518430096533162,
+      "physics_weather_identity_loss": 14.777678191059767,
+      "physics_weather_threshold_loss": 2.21193349080455,
+      "physics_weather_drought_loss": 0.023861596780995326,
+      "physics_weather_bounded_loss": 0.0,
+      "physics_consistency_loss": 0.038137340410189194,
+      "physics_growth_loss": 0.0035156554664776784,
+      "physics_phenology_loss": 0.007015711276694781,
+      "physics_water_loss": 0.0024164430209143895,
+      "rmse": 447.87252301854824,
+      "mae": 71.90264892578125,
+      "mse": 200589.796875,
+      "r2": 0.7478794455528259,
+      "val_rmse": 348.57193034580393,
+      "val_mae": 61.664424896240234,
+      "val_mse": 121502.390625,
+      "val_r2": 0.8979759812355042,
+      "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/checkpoint.pt",
+      "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/history.csv",
+      "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/loss_curve.png",
+      "physics_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/physics_curve.png",
+      "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/transformer_best/transformer_encoder/test_predictions.csv",
+      "trainable_parameters": 172224,
+      "total_parameters": 172224,
+      "status": "trained"
+    }
+  ]
+}

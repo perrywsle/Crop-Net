@@ -1,0 +1,40 @@
+{
+  "model_name": "lstm",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 331.4004611116285,
+    "mae": 59.90062713623047,
+    "mse": 109826.265625,
+    "r2": 0.9077802896499634,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 417.57970796004923,
+    "mae": 67.33060455322266,
+    "mse": 174372.8125,
+    "r2": 0.7808314561843872,
+    "n_samples": 41580.0
+  },
+  "final_train_loss": 0.39605321286101935,
+  "final_val_loss": 0.937370832720991,
+  "final_physics_loss": 1.12754973859498,
+  "final_physics_latent_loss": 0.26341654696448485,
+  "final_physics_ag_loss": 0.04054604017925182,
+  "final_physics_ndvi_loss": 0.08378798981206585,
+  "final_physics_weather_loss": 3.518430096533162,
+  "final_physics_weather_identity_loss": 14.777678191059767,
+  "final_physics_weather_threshold_loss": 2.21193349080455,
+  "final_physics_weather_drought_loss": 0.023861596780995326,
+  "final_physics_weather_bounded_loss": 0.0,
+  "final_physics_consistency_loss": 0.23253910208390619,
+  "final_physics_growth_loss": 0.008802599985440973,
+  "final_physics_phenology_loss": 0.0100257543200997,
+  "final_physics_water_loss": 0.012049089828725617,
+  "trainable_parameters": 58848,
+  "total_parameters": 58848,
+  "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/history.csv",
+  "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/loss_curve.png",
+  "physics_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/physics_curve.png",
+  "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/checkpoint.pt",
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/lstm_best/lstm/test_predictions.csv"
+}

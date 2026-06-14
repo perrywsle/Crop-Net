@@ -1,0 +1,19 @@
+{
+  "model_name": "Ridge",
+  "model_type": "ml",
+  "val_metrics": {
+    "rmse": 8.177381289600905,
+    "mae": 7.550059700171354,
+    "mse": 66.86956475551496,
+    "r2": -4.22568319489572
+  },
+  "test_metrics": {
+    "rmse": 7.0269764109570945,
+    "mae": 5.8273097883464136,
+    "mse": 49.37839748014745,
+    "r2": -0.011265151935527573
+  },
+  "selected_from_train_only": true,
+  "candidate_val_rmse": 8.177381289600905,
+  "status": "trained"
+}

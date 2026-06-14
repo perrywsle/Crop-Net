@@ -1,0 +1,12 @@
+monthly_path=data/training/soybeans/all.parquet
+usda_paths=data/raw/cropnet/soybeans-IA-2017_2022/USDA Crop Dataset/Soybeans/2017/USDA_Soybean_County_2017.csv, data/raw/cropnet/soybeans-IA-2017_2022/USDA Crop Dataset/Soybeans/2018/USDA_Soybean_County_2018.csv, data/raw/cropnet/soybeans-IA-2017_2022/USDA Crop Dataset/Soybeans/2019/USDA_Soybean_County_2019.csv, data/raw/cropnet/soybeans-IA-2017_2022/USDA Crop Dataset/Soybeans/2020/USDA_Soybean_County_2020.csv, data/raw/cropnet/soybeans-IA-2017_2022/USDA Crop Dataset/Soybeans/2021/USDA_Soybean_County_2021.csv, data/raw/cropnet/soybeans-IA-2017_2022/USDA Crop Dataset/Soybeans/2022/USDA_Soybean_County_2022.csv
+crop_type=soybeans
+feature_group=all
+target_column=yield_bu_acre
+train_years=2017 2018 2019 2020
+val_years=2021
+test_years=2022
+rows=6396
+train_rows=4320
+val_rows=912
+test_rows=1164

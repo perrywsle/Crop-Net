@@ -1,0 +1,101 @@
+{
+  "run_name": "corn_ia_monthly_2017_2022_batch_007",
+  "base_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo",
+  "output_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007",
+  "from_output_dir": null,
+  "experiment_root": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments",
+  "raw_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007/raw_chunks",
+  "feature_cache_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007/feature_cache",
+  "artifact_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007/artifacts",
+  "log_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007/logs",
+  "log_file": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/outputs/experiments/corn_ia_monthly_2017_2022_batch_007/logs/corn_ia_monthly_2017_2022_batch_007.log",
+  "repo_dir": "/content/drive/MyDrive/cropnet_iowa_corn/Crop-Net-repo/Crop-Net",
+  "crop_type": "Corn",
+  "state_codes": [
+    "IA"
+  ],
+  "image_types": [
+    "AG",
+    "NDVI"
+  ],
+  "years": [
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022
+  ],
+  "quarters": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4"
+  ],
+  "train_years": [
+    2017,
+    2018,
+    2019,
+    2020
+  ],
+  "val_years": [
+    2021
+  ],
+  "test_years": [
+    2022
+  ],
+  "fips_codes": [
+    "19121",
+    "19123",
+    "19125",
+    "19127",
+    "19129",
+    "19131",
+    "19133",
+    "19135",
+    "19137",
+    "19139"
+  ],
+  "max_counties": 10,
+  "seq_len": 6,
+  "forecast_horizon": 1,
+  "batch_size": 64,
+  "epochs": 80,
+  "early_stopping_patience": 10,
+  "learning_rate": 0.001,
+  "hidden_size": 64,
+  "num_layers": 1,
+  "dropout": 0.0,
+  "weight_decay": 0.0001,
+  "loss_mode": "raw_mse",
+  "feature_group": "all",
+  "target_mode": "raw",
+  "models": [
+    "naive_lag1",
+    "lstm",
+    "tiny_mamba_ssm"
+  ],
+  "seed": 42,
+  "resume": true,
+  "dry_run": false,
+  "full_run": true,
+  "eval_only": false,
+  "run_classical_ssm": false,
+  "run_blank_fill_eval": false,
+  "blank_fill_year": 2022,
+  "blank_fill_known_months": [
+    0,
+    1,
+    3,
+    6,
+    9
+  ],
+  "blank_fill_baselines": [
+    "lag1",
+    "seasonal_last_year"
+  ],
+  "blank_fill_residual_seasonal": false,
+  "strict_blank_fill_no_future_fill": false,
+  "strict_fill_strategy": "past_only",
+  "blank_fill_output_prefix": "blank_fill"
+}

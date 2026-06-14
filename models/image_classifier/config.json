@@ -1,0 +1,92 @@
+{
+  "run_name": "ia30_seq6_seasonal_residual_blankfill",
+  "base_dir": "/home/student/CROPNET",
+  "output_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill",
+  "from_output_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill",
+  "experiment_root": null,
+  "raw_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill/raw_chunks",
+  "feature_cache_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill/feature_cache",
+  "artifact_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill/artifacts",
+  "log_dir": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill/logs",
+  "log_file": "/home/student/CROPNET/outputs/experiments/ia30_seq6_seasonal_residual_blankfill/logs/ia30_seq6_seasonal_residual_blankfill.log",
+  "repo_dir": "/home/student/CROPNET/Crop-Net",
+  "crop_type": "Corn",
+  "state_codes": [
+    "IA"
+  ],
+  "image_types": [
+    "AG",
+    "NDVI"
+  ],
+  "years": [
+    2017,
+    2018,
+    2019,
+    2020,
+    2021
+  ],
+  "quarters": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4"
+  ],
+  "train_years": [
+    2017,
+    2018,
+    2019
+  ],
+  "val_years": [
+    2020
+  ],
+  "test_years": [
+    2021
+  ],
+  "fips_codes": [],
+  "max_counties": 10,
+  "seq_len": 6,
+  "forecast_horizon": 1,
+  "batch_size": 64,
+  "epochs": 80,
+  "early_stopping_patience": 10,
+  "learning_rate": 0.001,
+  "hidden_size": 64,
+  "num_layers": 1,
+  "dropout": 0.0,
+  "weight_decay": 0.0001,
+  "loss_mode": "raw_mse",
+  "feature_group": "all",
+  "target_mode": "seasonal_residual",
+  "models": [
+    "naive_lag1",
+    "seasonal_last_year",
+    "lstm",
+    "tiny_mamba_ssm",
+    "sarima",
+    "ensemble_mean",
+    "ensemble_weighted"
+  ],
+  "seed": 42,
+  "resume": false,
+  "dry_run": false,
+  "full_run": false,
+  "eval_only": true,
+  "run_classical_ssm": false,
+  "run_blank_fill_eval": true,
+  "blank_fill_year": 2021,
+  "blank_fill_known_months": [
+    0,
+    1,
+    3,
+    6,
+    9
+  ],
+  "blank_fill_baselines": [
+    "lag1",
+    "seasonal_last_year"
+  ],
+  "blank_fill_residual_seasonal": true,
+  "strict_blank_fill_no_future_fill": true,
+  "strict_fill_strategy": "past_only",
+  "blank_fill_output_prefix": "strict_blank_fill_sarima_ensemble_full30"
+}

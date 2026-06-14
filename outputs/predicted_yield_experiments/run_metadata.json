@@ -1,0 +1,38 @@
+{
+  "monthly_table": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\experiments\\corn_ia_monthly_2017_2022\\artifacts\\official_monthly_feature_table.parquet",
+  "labelled_yield_frame": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\yield_baseline\\corn_ia_2017_2022_monthly_full\\merged_monthly_training_frame.csv",
+  "output_dir": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments",
+  "feature_group": "all",
+  "crop_type": "corn",
+  "known_months": 1,
+  "years": [
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022
+  ],
+  "models": [
+    "gru",
+    "transformer_encoder",
+    "lstm",
+    "naive_lag1",
+    "seasonal_last_year"
+  ],
+  "ensemble_weighted_weights": {
+    "gru": 0.3333333333333333,
+    "transformer_encoder": 0.3333333333333333,
+    "lstm": 0.3333333333333333
+  },
+  "generated_tables": {
+    "gru": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\gru_known1_monthly_features.csv",
+    "transformer_encoder": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\transformer_encoder_known1_monthly_features.csv",
+    "lstm": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\lstm_known1_monthly_features.csv",
+    "naive_lag1": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\naive_lag1_known1_monthly_features.csv",
+    "seasonal_last_year": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\seasonal_last_year_known1_monthly_features.csv",
+    "ensemble_mean": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\ensemble_mean_known1_monthly_features.csv",
+    "ensemble_weighted": "C:\\Users\\User\\Documents\\GitHub\\Crop-Net\\outputs\\predicted_yield_experiments\\predicted_monthly_tables\\ensemble_weighted_known1_monthly_features.csv"
+  },
+  "yield_training_ran": true
+}

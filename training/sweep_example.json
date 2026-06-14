@@ -1,0 +1,72 @@
+{
+  "name": "pinn_sweep",
+  "dataset_dir": "data/training",
+  "output_dir": "training/sweeps",
+  "train_script": "training/train.py",
+  "objective": {
+    "split": "val",
+    "metric": "r2",
+    "direction": "max"
+  },
+  "base_args": {
+    "target_mode": "raw",
+    "latent_state_dim": 3,
+    "physics_loss": "combined",
+    "physics_config": "training/physics_weights.json",
+    "max_epochs": 120,
+    "patience": 20,
+    "batch_size": 64,
+    "dropout": 0.05,
+    "learning_rate": 0.001,
+    "weight_decay": 0.00005,
+    "physics_weight": 0.03,
+    "physics_warmup_epochs": 10,
+    "hidden_size": 96
+  },
+  "jobs": [
+    {
+      "name": "gru",
+      "models": ["gru"],
+      "grid": {
+        "hidden_size": [64, 96, 128],
+        "learning_rate": [0.001, 0.0005],
+        "weight_decay": [0.0001, 0.00005],
+        "physics_weight": [0.01, 0.03, 0.05],
+        "physics_warmup_epochs": [5, 10, 15]
+      }
+    },
+    {
+      "name": "lstm",
+      "models": ["lstm"],
+      "grid": {
+        "hidden_size": [64, 96, 128],
+        "learning_rate": [0.001, 0.0005],
+        "weight_decay": [0.0001, 0.00005],
+        "physics_weight": [0.01, 0.03, 0.05],
+        "physics_warmup_epochs": [5, 10, 15]
+      }
+    },
+    {
+      "name": "transformer",
+      "models": ["transformer_encoder"],
+      "grid": {
+        "hidden_size": [64, 96, 128],
+        "learning_rate": [0.001, 0.0005],
+        "weight_decay": [0.0001, 0.00005],
+        "physics_weight": [0.01, 0.03, 0.05],
+        "physics_warmup_epochs": [5, 10, 15]
+      }
+    },
+    {
+      "name": "mamba",
+      "models": ["tiny_mamba_ssm"],
+      "grid": {
+        "hidden_size": [64, 96, 128],
+        "learning_rate": [0.001, 0.0005],
+        "weight_decay": [0.0001, 0.00005],
+        "physics_weight": [0.01, 0.03, 0.05],
+        "physics_warmup_epochs": [5, 10, 15]
+      }
+    }
+  ]
+}

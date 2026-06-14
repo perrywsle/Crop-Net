@@ -1,0 +1,28 @@
+{
+  "model_name": "gru",
+  "model_type": "learned",
+  "train_metrics": {
+    "rmse": 2.6105220808912066,
+    "mae": 0.4317860007286072,
+    "mse": 6.814825534820557,
+    "r2": 0.9113699793815613,
+    "n_samples": 41580.0
+  },
+  "test_metrics": {
+    "rmse": 2.6256426978110716,
+    "mae": 0.44826817512512207,
+    "mse": 6.8939995765686035,
+    "r2": 0.9107699394226074,
+    "n_samples": 41580.0
+  },
+  "final_train_loss": 0.594183038036774,
+  "final_val_loss": 0.5987179357596119,
+  "final_physics_loss": 15.567379042757079,
+  "trainable_parameters": 46080,
+  "total_parameters": 46080,
+  "history_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/gru/history.csv",
+  "loss_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/gru/loss_curve.png",
+  "physics_curve_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/gru/physics_curve.png",
+  "checkpoint_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/gru/checkpoint.pt",
+  "predictions_path": "/mnt/c/Users/lobakkang/GITHUB/Crop-Net/training/runs/eval_all/gru/test_predictions.csv"
+}

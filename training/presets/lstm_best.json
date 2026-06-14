@@ -1,0 +1,36 @@
+{
+  "name": "lstm_best",
+  "dataset_dir": "data/training",
+  "output_dir": "training/runs",
+  "train_script": "training/train.py",
+  "objective": {
+    "split": "val",
+    "metric": "r2",
+    "direction": "max"
+  },
+  "base_args": {
+    "run_name": "lstm_best",
+    "models": ["lstm"],
+    "target_mode": "seasonal_residual",
+    "latent_state_dim": 3,
+    "physics_loss": "combined",
+    "physics_config": "training/physics_weights.json",
+    "max_epochs": 120,
+    "patience": 20,
+    "batch_size": 64,
+    "dropout": 0.05,
+    "seq_len": 6,
+    "learning_rate": 0.001,
+    "weight_decay": 0.00005,
+    "physics_weight": 0.03,
+    "physics_warmup_epochs": 10,
+    "hidden_size": 96,
+    "overwrite": true
+  },
+  "jobs": [
+    {
+      "name": "lstm",
+      "models": ["lstm"]
+    }
+  ]
+}

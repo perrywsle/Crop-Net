@@ -1,0 +1,12 @@
+monthly_path=data/training/all.parquet
+usda_paths=/mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/cache/web_uploads/8c050c09f26861d2d6b483fc92df8df8deee6a60328fe1ed8451640e4bfacf07/test_data/usda/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/raw/cropnet/corn-IA-2017_2022/USDA Crop Dataset/Corn/2017/USDA_Corn_County_2017.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/raw/cropnet/corn-IA-2017_2022/USDA Crop Dataset/Corn/2018/USDA_Corn_County_2018.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/raw/cropnet/corn-IA-2017_2022/USDA Crop Dataset/Corn/2019/USDA_Corn_County_2019.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/raw/cropnet/corn-IA-2017_2022/USDA Crop Dataset/Corn/2020/USDA_Corn_County_2020.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/raw/cropnet/corn-IA-2017_2022/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/raw/cropnet/corn-IA-2017_2022/USDA Crop Dataset/Corn/2022/USDA_Corn_County_2022.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/data/sample_data/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv, /mnt/c/Users/lobakkang/GITHUB/Crop-Net/test_data/usda/USDA Crop Dataset/Corn/2021/USDA_Corn_County_2021.csv
+crop_type=corn
+feature_group=all
+target_column=yield_bu_acre
+train_years=2017 2018 2019 2020
+val_years=2021
+test_years=2022
+rows=6624
+train_rows=4452
+val_rows=1008
+test_rows=1164
